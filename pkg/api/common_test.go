@@ -37,7 +37,9 @@ import (
 	"github.com/grafana/grafana/pkg/services/searchusers"
 	"github.com/grafana/grafana/pkg/services/searchusers/filters"
 	"github.com/grafana/grafana/pkg/services/sqlstore"
-	stars "github.com/grafana/grafana/pkg/services/stars"
+	"github.com/grafana/grafana/pkg/services/sqlstore/mockstore"
+	"github.com/grafana/grafana/pkg/services/stars"
+	starstests "github.com/grafana/grafana/pkg/services/stars/starstests"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/web"
 	"github.com/stretchr/testify/require"
@@ -367,7 +369,7 @@ func setupHTTPServerWithCfgDb(t *testing.T, useFakeAccessControl, enableAccessCo
 
 	dashboardsStore := dashboardsstore.ProvideDashboardStore(db)
 
-	starsFake := starstests.NewStarsManagerFake()
+	starsFake := starstests.NewStarsServiceFake()
 
 	routeRegister := routing.NewRouteRegister()
 
@@ -379,16 +381,10 @@ func setupHTTPServerWithCfgDb(t *testing.T, useFakeAccessControl, enableAccessCo
 		Live:               newTestLive(t),
 		QuotaService:       &quota.QuotaService{Cfg: cfg},
 		RouteRegister:      routeRegister,
-<<<<<<< HEAD
-		SQLStore:           store,
 		searchUsersService: searchusers.ProvideUsersService(db, filters.ProvideOSSSearchUserFilter()),
-		dashboardService:   dashboardservice.ProvideDashboardService(dashboardsStore, nil),
-=======
 		SQLStore:           db,
-		searchUsersService: searchusers.ProvideUsersService(bus, filters.ProvideOSSSearchUserFilter()),
-		dashboardService:   dashboardservice.ProvideDashboardService(dashboardsStore),
-		starsService:       starsFake,
->>>>>>> c0d4767f7d (Chore: Create fake star service)
+		dashboardService:   dashboardservice.ProvideDashboardService(dashboardsStore, nil, starsFake),
+		StarsService:       starsFake,
 	}
 
 	// Defining the accesscontrol service has to be done before registering routes
@@ -440,7 +436,6 @@ func setupHTTPServerWithCfgDb(t *testing.T, useFakeAccessControl, enableAccessCo
 		db:              db,
 		cfg:             cfg,
 		dashboardsStore: dashboardsStore,
-		starsService:    starsFake,
 	}
 }
 
