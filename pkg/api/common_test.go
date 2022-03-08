@@ -38,7 +38,6 @@ import (
 	"github.com/grafana/grafana/pkg/services/searchusers/filters"
 	"github.com/grafana/grafana/pkg/services/sqlstore"
 	"github.com/grafana/grafana/pkg/services/sqlstore/mockstore"
-	"github.com/grafana/grafana/pkg/services/stars"
 	starstests "github.com/grafana/grafana/pkg/services/stars/starstests"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/web"
@@ -283,7 +282,7 @@ type accessControlScenarioContext struct {
 	cfg *setting.Cfg
 
 	dashboardsStore dashboards.Store
-	starsManager    stars.Manager
+	// starsManager    stars.Manager
 }
 
 func setAccessControlPermissions(acmock *accesscontrolmock.Mock, perms []*accesscontrol.Permission, org int64) {
