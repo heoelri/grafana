@@ -381,7 +381,7 @@ func setupHTTPServerWithCfgDb(t *testing.T, useFakeAccessControl, enableAccessCo
 		QuotaService:       &quota.QuotaService{Cfg: cfg},
 		RouteRegister:      routeRegister,
 		searchUsersService: searchusers.ProvideUsersService(db, filters.ProvideOSSSearchUserFilter()),
-		SQLStore:           db,
+		SQLStore:           store,
 		dashboardService:   dashboardservice.ProvideDashboardService(dashboardsStore, nil, starsFake),
 		StarsService:       starsFake,
 	}
