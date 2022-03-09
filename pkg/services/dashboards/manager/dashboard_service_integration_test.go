@@ -14,7 +14,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/dashboards/database"
 	"github.com/grafana/grafana/pkg/services/guardian"
 	"github.com/grafana/grafana/pkg/services/sqlstore"
-	starstests "github.com/grafana/grafana/pkg/services/stars/starstests"
+	startest "github.com/grafana/grafana/pkg/services/star/startest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -855,7 +855,7 @@ func callSaveWithResult(t *testing.T, cmd models.SaveDashboardCommand, sqlStore 
 
 	dto := toSaveDashboardDto(cmd)
 	dashboardStore := database.ProvideDashboardStore(sqlStore)
-	starsFake := starstests.NewStarsServiceFake()
+	starsFake := startest.NewStarsServiceFake()
 	res, err := ProvideDashboardService(dashboardStore, &dummyDashAlertExtractor{}, starsFake).SaveDashboard(context.Background(), &dto, false)
 	require.NoError(t, err)
 
@@ -865,7 +865,7 @@ func callSaveWithResult(t *testing.T, cmd models.SaveDashboardCommand, sqlStore 
 func callSaveWithError(cmd models.SaveDashboardCommand, sqlStore *sqlstore.SQLStore) error {
 	dto := toSaveDashboardDto(cmd)
 	dashboardStore := database.ProvideDashboardStore(sqlStore)
-	starsFake := starstests.NewStarsServiceFake()
+	starsFake := startest.NewStarsServiceFake()
 	_, err := ProvideDashboardService(dashboardStore, &dummyDashAlertExtractor{}, starsFake).SaveDashboard(context.Background(), &dto, false)
 	return err
 }
@@ -893,7 +893,7 @@ func saveTestDashboard(t *testing.T, title string, orgID, folderID int64, sqlSto
 	}
 
 	dashboardStore := database.ProvideDashboardStore(sqlStore)
-	starsFake := starstests.NewStarsServiceFake()
+	starsFake := startest.NewStarsServiceFake()
 	res, err := ProvideDashboardService(dashboardStore, &dummyDashAlertExtractor{}, starsFake).SaveDashboard(context.Background(), &dto, false)
 	require.NoError(t, err)
 
@@ -922,7 +922,7 @@ func saveTestFolder(t *testing.T, title string, orgID int64, sqlStore *sqlstore.
 	}
 
 	dashboardStore := database.ProvideDashboardStore(sqlStore)
-	starsFake := starstests.NewStarsServiceFake()
+	starsFake := startest.NewStarsServiceFake()
 	res, err := ProvideDashboardService(dashboardStore, &dummyDashAlertExtractor{}, starsFake).SaveDashboard(context.Background(), &dto, false)
 	require.NoError(t, err)
 

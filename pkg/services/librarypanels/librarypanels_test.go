@@ -17,7 +17,7 @@ import (
 	dashboardservice "github.com/grafana/grafana/pkg/services/dashboards/manager"
 	"github.com/grafana/grafana/pkg/services/libraryelements"
 	"github.com/grafana/grafana/pkg/services/sqlstore"
-	starstests "github.com/grafana/grafana/pkg/services/stars/starstests"
+	startest "github.com/grafana/grafana/pkg/services/star/startest"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/stretchr/testify/require"
 )
@@ -1419,7 +1419,7 @@ func createDashboard(t *testing.T, sqlStore *sqlstore.SQLStore, user *models.Sig
 
 	dashboadStore := database.ProvideDashboardStore(sqlStore)
 	dashAlertService := alerting.ProvideDashAlertExtractorService(nil, nil)
-	starsFake := starstests.NewStarsServiceFake()
+	starsFake := startest.NewStarsServiceFake()
 	dashboard, err := dashboardservice.ProvideDashboardService(dashboadStore, dashAlertService, starsFake).SaveDashboard(context.Background(), dashItem, true)
 	require.NoError(t, err)
 
@@ -1431,7 +1431,7 @@ func createFolderWithACL(t *testing.T, sqlStore *sqlstore.SQLStore, title string
 	t.Helper()
 
 	dashboardStore := database.ProvideDashboardStore(sqlStore)
-	starsFake := starstests.NewStarsServiceFake()
+	starsFake := startest.NewStarsServiceFake()
 	d := dashboardservice.ProvideDashboardService(dashboardStore, nil, starsFake)
 	s := dashboardservice.ProvideFolderService(d, dashboardStore, nil)
 	t.Logf("Creating folder with title and UID %q", title)
@@ -1521,7 +1521,7 @@ func testScenario(t *testing.T, desc string, fn func(t *testing.T, sc scenarioCo
 		role := models.ROLE_ADMIN
 		sqlStore := sqlstore.InitTestDB(t)
 		dashboardStore := database.ProvideDashboardStore(sqlStore)
-		starsFake := starstests.NewStarsServiceFake()
+		starsFake := startest.NewStarsServiceFake()
 		folderService := dashboardservice.ProvideFolderService(dashboardservice.ProvideDashboardService(dashboardStore, &alerting.DashAlertExtractorService{}, starsFake), dashboardStore, nil)
 
 		elementService := libraryelements.ProvideService(cfg, sqlStore, routing.NewRouteRegister(), folderService)

@@ -19,7 +19,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/guardian"
 	"github.com/grafana/grafana/pkg/services/sqlstore/mockstore"
-	starstests "github.com/grafana/grafana/pkg/services/stars/starstests"
+	startest "github.com/grafana/grafana/pkg/services/star/startest"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/stretchr/testify/mock"
 )
@@ -31,7 +31,7 @@ func TestFolderPermissionAPIEndpoint(t *testing.T) {
 	defer folderService.AssertExpectations(t)
 
 	dashboardStore := &database.FakeDashboardStore{}
-	starsFake := starstests.NewStarsServiceFake()
+	starsFake := startest.NewStarsServiceFake()
 	defer dashboardStore.AssertExpectations(t)
 
 	hs := &HTTPServer{Cfg: settings, folderService: folderService, dashboardService: service.ProvideDashboardService(dashboardStore, nil, starsFake), Features: featuremgmt.WithFeatures()}

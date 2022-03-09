@@ -38,7 +38,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/searchusers/filters"
 	"github.com/grafana/grafana/pkg/services/sqlstore"
 	"github.com/grafana/grafana/pkg/services/sqlstore/mockstore"
-	starstests "github.com/grafana/grafana/pkg/services/stars/starstests"
+	startest "github.com/grafana/grafana/pkg/services/star/startest"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/web"
 	"github.com/stretchr/testify/require"
@@ -282,7 +282,6 @@ type accessControlScenarioContext struct {
 	cfg *setting.Cfg
 
 	dashboardsStore dashboards.Store
-	// starsManager    stars.Manager
 }
 
 func setAccessControlPermissions(acmock *accesscontrolmock.Mock, perms []*accesscontrol.Permission, org int64) {
@@ -368,7 +367,7 @@ func setupHTTPServerWithCfgDb(t *testing.T, useFakeAccessControl, enableAccessCo
 
 	dashboardsStore := dashboardsstore.ProvideDashboardStore(db)
 
-	starsFake := starstests.NewStarsServiceFake()
+	starsFake := startest.NewStarsServiceFake()
 
 	routeRegister := routing.NewRouteRegister()
 

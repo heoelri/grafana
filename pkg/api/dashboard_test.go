@@ -27,7 +27,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/quota"
 	"github.com/grafana/grafana/pkg/services/sqlstore"
 	"github.com/grafana/grafana/pkg/services/sqlstore/mockstore"
-	starstests "github.com/grafana/grafana/pkg/services/stars/starstests"
+	startest "github.com/grafana/grafana/pkg/services/star/startest"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/web"
 	"github.com/stretchr/testify/assert"
@@ -216,7 +216,7 @@ func TestDashboardAPIEndpoint(t *testing.T) {
 		mockSQLStore.ExpectedDashboard = fakeDash
 
 		dashboardStore := database.ProvideDashboardStore(sqlstore.InitTestDB(t))
-		starsFake := starstests.NewStarsServiceFake()
+		starsFake := startest.NewStarsServiceFake()
 		hs := &HTTPServer{
 			Cfg:                   setting.NewCfg(),
 			Live:                  newTestLive(t),
@@ -936,7 +936,7 @@ func getDashboardShouldReturn200WithConfig(t *testing.T, sc *scenarioContext, pr
 
 	libraryPanelsService := mockLibraryPanelService{}
 	libraryElementsService := mockLibraryElementService{}
-	starsFake := starstests.NewStarsServiceFake()
+	starsFake := startest.NewStarsServiceFake()
 
 	hs := &HTTPServer{
 		Cfg:                          setting.NewCfg(),
