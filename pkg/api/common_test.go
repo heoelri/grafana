@@ -38,7 +38,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/searchusers/filters"
 	"github.com/grafana/grafana/pkg/services/sqlstore"
 	"github.com/grafana/grafana/pkg/services/sqlstore/mockstore"
-	startest "github.com/grafana/grafana/pkg/services/star/startest"
+	"github.com/grafana/grafana/pkg/services/star/startest"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/web"
 	"github.com/stretchr/testify/require"
@@ -367,7 +367,7 @@ func setupHTTPServerWithCfgDb(t *testing.T, useFakeAccessControl, enableAccessCo
 
 	dashboardsStore := dashboardsstore.ProvideDashboardStore(db)
 
-	starsFake := startest.NewStarsServiceFake()
+	starFake := startest.NewStarServiceFake()
 
 	routeRegister := routing.NewRouteRegister()
 
@@ -381,8 +381,8 @@ func setupHTTPServerWithCfgDb(t *testing.T, useFakeAccessControl, enableAccessCo
 		RouteRegister:      routeRegister,
 		searchUsersService: searchusers.ProvideUsersService(db, filters.ProvideOSSSearchUserFilter()),
 		SQLStore:           store,
-		dashboardService:   dashboardservice.ProvideDashboardService(dashboardsStore, nil, starsFake),
-		StarsService:       starsFake,
+		dashboardService:   dashboardservice.ProvideDashboardService(dashboardsStore, nil, starFake),
+		StarManager:        starFake,
 	}
 
 	// Defining the accesscontrol service has to be done before registering routes

@@ -14,7 +14,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/guardian"
 	"github.com/grafana/grafana/pkg/services/sqlstore/mockstore"
-	startest "github.com/grafana/grafana/pkg/services/star/startest"
+	"github.com/grafana/grafana/pkg/services/star/startest"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -25,14 +25,14 @@ func TestDashboardPermissionAPIEndpoint(t *testing.T) {
 	t.Run("Dashboard permissions test", func(t *testing.T) {
 		settings := setting.NewCfg()
 		dashboardStore := &database.FakeDashboardStore{}
-		starsFake := startest.NewStarsServiceFake()
+		starFake := startest.NewStarServiceFake()
 		defer dashboardStore.AssertExpectations(t)
 
 		mockSQLStore := mockstore.NewSQLStoreMock()
 
 		hs := &HTTPServer{
 			Cfg:              settings,
-			dashboardService: dashboardservice.ProvideDashboardService(dashboardStore, nil, starsFake),
+			dashboardService: dashboardservice.ProvideDashboardService(dashboardStore, nil, starFake),
 			SQLStore:         mockSQLStore,
 			Features:         featuremgmt.WithFeatures(),
 		}

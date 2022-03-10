@@ -17,7 +17,7 @@ import (
 	dashboardservice "github.com/grafana/grafana/pkg/services/dashboards/manager"
 	"github.com/grafana/grafana/pkg/services/libraryelements"
 	"github.com/grafana/grafana/pkg/services/sqlstore"
-	startest "github.com/grafana/grafana/pkg/services/star/startest"
+	"github.com/grafana/grafana/pkg/services/star/startest"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/stretchr/testify/require"
 )
@@ -1419,8 +1419,8 @@ func createDashboard(t *testing.T, sqlStore *sqlstore.SQLStore, user *models.Sig
 
 	dashboadStore := database.ProvideDashboardStore(sqlStore)
 	dashAlertService := alerting.ProvideDashAlertExtractorService(nil, nil)
-	starsFake := startest.NewStarsServiceFake()
-	dashboard, err := dashboardservice.ProvideDashboardService(dashboadStore, dashAlertService, starsFake).SaveDashboard(context.Background(), dashItem, true)
+	starFake := startest.NewStarServiceFake()
+	dashboard, err := dashboardservice.ProvideDashboardService(dashboadStore, dashAlertService, starFake).SaveDashboard(context.Background(), dashItem, true)
 	require.NoError(t, err)
 
 	return dashboard
@@ -1431,8 +1431,8 @@ func createFolderWithACL(t *testing.T, sqlStore *sqlstore.SQLStore, title string
 	t.Helper()
 
 	dashboardStore := database.ProvideDashboardStore(sqlStore)
-	starsFake := startest.NewStarsServiceFake()
-	d := dashboardservice.ProvideDashboardService(dashboardStore, nil, starsFake)
+	starFake := startest.NewStarServiceFake()
+	d := dashboardservice.ProvideDashboardService(dashboardStore, nil, starFake)
 	s := dashboardservice.ProvideFolderService(d, dashboardStore, nil)
 	t.Logf("Creating folder with title and UID %q", title)
 	folder, err := s.CreateFolder(context.Background(), user, user.OrgId, title, title)
@@ -1521,8 +1521,8 @@ func testScenario(t *testing.T, desc string, fn func(t *testing.T, sc scenarioCo
 		role := models.ROLE_ADMIN
 		sqlStore := sqlstore.InitTestDB(t)
 		dashboardStore := database.ProvideDashboardStore(sqlStore)
-		starsFake := startest.NewStarsServiceFake()
-		folderService := dashboardservice.ProvideFolderService(dashboardservice.ProvideDashboardService(dashboardStore, &alerting.DashAlertExtractorService{}, starsFake), dashboardStore, nil)
+		starFake := startest.NewStarServiceFake()
+		folderService := dashboardservice.ProvideFolderService(dashboardservice.ProvideDashboardService(dashboardStore, &alerting.DashAlertExtractorService{}, starFake), dashboardStore, nil)
 
 		elementService := libraryelements.ProvideService(cfg, sqlStore, routing.NewRouteRegister(), folderService)
 		service := LibraryPanelService{
