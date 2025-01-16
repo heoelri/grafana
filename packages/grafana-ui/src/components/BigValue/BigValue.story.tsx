@@ -1,10 +1,8 @@
-import { Story, Meta } from '@storybook/react';
-import React from 'react';
+import { StoryFn, Meta } from '@storybook/react';
 
-import { ArrayVector, FieldSparkline, FieldType } from '@grafana/data';
+import { FieldSparkline, FieldType } from '@grafana/data';
 
 import { useTheme2 } from '../../themes';
-import { withCenteredStory } from '../../utils/storybook/withCenteredStory';
 
 import {
   BigValue,
@@ -19,7 +17,6 @@ import mdx from './BigValue.mdx';
 const meta: Meta = {
   title: 'Visualizations/BigValue',
   component: BigValue,
-  decorators: [withCenteredStory],
   parameters: {
     docs: {
       page: mdx,
@@ -59,7 +56,7 @@ interface StoryProps extends Partial<Props> {
   valueText: string;
 }
 
-export const Basic: Story<StoryProps> = ({
+export const ApplyNoValue: StoryFn<StoryProps> = ({
   valueText,
   title,
   colorMode,
@@ -74,7 +71,51 @@ export const Basic: Story<StoryProps> = ({
   const sparkline: FieldSparkline = {
     y: {
       name: '',
-      values: new ArrayVector([1, 2, 3, 4, 3]),
+      values: [1, 2, 3, null, null],
+      type: FieldType.number,
+      state: { range: { min: 1, max: 4, delta: 3 } },
+      config: {
+        noValue: '0',
+      },
+    },
+  };
+
+  return (
+    <BigValue
+      theme={theme}
+      width={width}
+      height={height}
+      colorMode={colorMode}
+      graphMode={graphMode}
+      textMode={textMode}
+      justifyMode={justifyMode}
+      value={{
+        text: valueText,
+        numeric: 5022,
+        color: color,
+        title,
+      }}
+      sparkline={graphMode === BigValueGraphMode.None ? undefined : sparkline}
+    />
+  );
+};
+
+export const Basic: StoryFn<StoryProps> = ({
+  valueText,
+  title,
+  colorMode,
+  graphMode,
+  height,
+  width,
+  color,
+  textMode,
+  justifyMode,
+}) => {
+  const theme = useTheme2();
+  const sparkline: FieldSparkline = {
+    y: {
+      name: '',
+      values: [1, 2, 3, 4, 3],
       type: FieldType.number,
       state: { range: { min: 1, max: 4, delta: 3 } },
       config: {},
@@ -102,6 +143,18 @@ export const Basic: Story<StoryProps> = ({
 };
 
 Basic.args = {
+  valueText: '$5022',
+  title: 'Total Earnings',
+  colorMode: BigValueColorMode.Value,
+  graphMode: BigValueGraphMode.Area,
+  justifyMode: BigValueJustifyMode.Auto,
+  width: 400,
+  height: 300,
+  color: 'red',
+  textMode: BigValueTextMode.Auto,
+};
+
+ApplyNoValue.args = {
   valueText: '$5022',
   title: 'Total Earnings',
   colorMode: BigValueColorMode.Value,

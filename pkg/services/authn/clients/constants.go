@@ -1,6 +1,6 @@
 package clients
 
-import "github.com/grafana/grafana/pkg/util/errutil"
+import "github.com/grafana/grafana/pkg/apimachinery/errutil"
 
 const (
 	basicPrefix             = "Basic "
@@ -9,5 +9,5 @@ const (
 )
 
 var (
-	errIdentityNotFound = errutil.NewBase(errutil.StatusNotFound, "identity.not-found")
+	errIdentityNotFound = errutil.NotFound("identity.not-found")
 )

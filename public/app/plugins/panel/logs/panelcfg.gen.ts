@@ -4,21 +4,39 @@
 //     public/app/plugins/gen.go
 // Using jennies:
 //     TSTypesJenny
-//     PluginTSTypesJenny
+//     PluginTsTypesJenny
 //
 // Run 'make gen-cue' from repository root to regenerate.
 
 import * as common from '@grafana/schema';
 
-export const PanelCfgModelVersion = Object.freeze([0, 0]);
-
-export interface PanelOptions {
+export interface Options {
   dedupStrategy: common.LogsDedupStrategy;
+  displayedFields?: Array<string>;
+  enableInfiniteScrolling?: boolean;
   enableLogDetails: boolean;
+  isFilterLabelActive?: unknown;
+  logRowMenuIconsAfter?: unknown;
+  logRowMenuIconsBefore?: unknown;
+  /**
+   * TODO: figure out how to define callbacks
+   */
+  onClickFilterLabel?: unknown;
+  onClickFilterOutLabel?: unknown;
+  onClickFilterOutString?: unknown;
+  onClickFilterString?: unknown;
+  onClickHideField?: unknown;
+  onClickShowField?: unknown;
+  onNewLogsReceived?: unknown;
   prettifyLogMessage: boolean;
   showCommonLabels: boolean;
   showLabels: boolean;
+  showLogContextToggle: boolean;
   showTime: boolean;
   sortOrder: common.LogsSortOrder;
   wrapLogMessage: boolean;
 }
+
+export const defaultOptions: Partial<Options> = {
+  displayedFields: [],
+};

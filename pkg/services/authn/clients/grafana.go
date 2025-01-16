@@ -5,7 +5,9 @@ import (
 	"crypto/subtle"
 	"errors"
 	"net/mail"
+	"strconv"
 
+	"github.com/grafana/authlib/claims"
 	"github.com/grafana/grafana/pkg/services/authn"
 	"github.com/grafana/grafana/pkg/services/login"
 	"github.com/grafana/grafana/pkg/services/org"
@@ -32,18 +34,19 @@ func (c *Grafana) String() string {
 
 func (c *Grafana) AuthenticateProxy(ctx context.Context, r *authn.Request, username string, additional map[string]string) (*authn.Identity, error) {
 	identity := &authn.Identity{
-		AuthModule: login.AuthProxyAuthModule,
-		AuthID:     username,
+		AuthenticatedBy: login.AuthProxyAuthModule,
+		AuthID:          username,
 		ClientParams: authn.ClientParams{
 			SyncUser:        true,
 			SyncTeams:       true,
 			FetchSyncedUser: true,
 			SyncOrgRoles:    true,
-			AllowSignUp:     c.cfg.AuthProxyAutoSignUp,
+			SyncPermissions: true,
+			AllowSignUp:     c.cfg.AuthProxy.AutoSignUp,
 		},
 	}
 
-	switch c.cfg.AuthProxyHeaderProperty {
+	switch c.cfg.AuthProxy.HeaderProperty {
 	case "username":
 		identity.Login = username
 		addr, err := mail.ParseAddress(username)
@@ -54,7 +57,7 @@ func (c *Grafana) AuthenticateProxy(ctx context.Context, r *authn.Request, usern
 		identity.Login = username
 		identity.Email = username
 	default:
-		return nil, errInvalidProxyHeader.Errorf("invalid auth proxy header property, expected username or email but got: %s", c.cfg.AuthProxyHeaderProperty)
+		return nil, errInvalidProxyHeader.Errorf("invalid auth proxy header property, expected username or email but got: %s", c.cfg.AuthProxy.HeaderProperty)
 	}
 
 	if v, ok := additional[proxyFieldName]; ok {
@@ -91,7 +94,7 @@ func (c *Grafana) AuthenticatePassword(ctx context.Context, r *authn.Request, us
 	usr, err := c.userService.GetByLogin(ctx, &user.GetUserByLoginQuery{LoginOrEmail: username})
 	if err != nil {
 		if errors.Is(err, user.ErrUserNotFound) {
-			return nil, errIdentityNotFound.Errorf("no user fund: %w", err)
+			return nil, errIdentityNotFound.Errorf("no user found: %w", err)
 		}
 		return nil, err
 	}
@@ -99,16 +102,17 @@ func (c *Grafana) AuthenticatePassword(ctx context.Context, r *authn.Request, us
 	// user was found so set auth module in req metadata
 	r.SetMeta(authn.MetaKeyAuthModule, "grafana")
 
-	if ok := comparePassword(password, usr.Salt, usr.Password); !ok {
+	if ok := comparePassword(password, usr.Salt, string(usr.Password)); !ok {
 		return nil, errInvalidPassword.Errorf("invalid password")
 	}
 
-	signedInUser, err := c.userService.GetSignedInUserWithCacheCtx(ctx, &user.GetSignedInUserQuery{OrgID: r.OrgID, UserID: usr.ID})
-	if err != nil {
-		return nil, err
-	}
-
-	return authn.IdentityFromSignedInUser(authn.NamespacedID(authn.NamespaceUser, signedInUser.UserID), signedInUser, authn.ClientParams{SyncPermissions: true}), nil
+	return &authn.Identity{
+		ID:              strconv.FormatInt(usr.ID, 10),
+		Type:            claims.TypeUser,
+		OrgID:           r.OrgID,
+		ClientParams:    authn.ClientParams{FetchSyncedUser: true, SyncPermissions: true},
+		AuthenticatedBy: login.PasswordAuthModule,
+	}, nil
 }
 
 func comparePassword(password, salt, hash string) bool {

@@ -1,5 +1,6 @@
 import { css, cx } from '@emotion/css';
-import React, { useState, HTMLAttributes, useMemo, useRef, useLayoutEffect } from 'react';
+import { useState, HTMLAttributes, useMemo, useRef, useLayoutEffect } from 'react';
+import * as React from 'react';
 import { useWindowSize } from 'react-use';
 
 import { Dimensions2D, GrafanaTheme2 } from '@grafana/data';
@@ -100,6 +101,8 @@ export const VizTooltipContainer = ({
         transform: `translate(${placement.x}px, ${placement.y}px)`,
         transition: 'transform ease-out 0.1s',
       }}
+      aria-live="polite"
+      aria-atomic="true"
       {...otherProps}
       className={cx(styles.wrapper, className)}
     >
@@ -111,7 +114,5 @@ export const VizTooltipContainer = ({
 VizTooltipContainer.displayName = 'VizTooltipContainer';
 
 const getStyles = (theme: GrafanaTheme2) => ({
-  wrapper: css`
-    ${getTooltipContainerStyles(theme)}
-  `,
+  wrapper: css(getTooltipContainerStyles(theme)),
 });

@@ -1,7 +1,8 @@
-import { toDataFrame } from '../../dataframe';
-import { DataTransformerConfig, DisplayProcessor, Field, FieldType } from '../../types';
+import { toDataFrame } from '../../dataframe/processDataFrame';
+import { Field, FieldType } from '../../types/dataFrame';
+import { DisplayProcessor } from '../../types/displayValue';
+import { DataTransformerConfig } from '../../types/transformations';
 import { mockTransformationsRegistry } from '../../utils/tests/mockTransformationsRegistry';
-import { ArrayVector } from '../../vector';
 import { transformDataFrame } from '../transformDataFrame';
 
 import { DataTransformerID } from './ids';
@@ -592,11 +593,9 @@ const createField = (
   config = {},
   display?: DisplayProcessor
 ): Field => {
-  return { name, type, values: new ArrayVector(values), config, labels: undefined, display };
+  return { name, type, values: values, config, labels: undefined, display };
 };
 
 const unwrap = (fields: Field[]): Field[] => {
-  return fields.map((field) =>
-    createField(field.name, field.type, field.values.toArray(), field.config, field.display)
-  );
+  return fields.map((field) => createField(field.name, field.type, field.values, field.config, field.display));
 };

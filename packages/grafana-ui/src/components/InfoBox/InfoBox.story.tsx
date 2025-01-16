@@ -1,5 +1,4 @@
-import { Meta, ComponentStory } from '@storybook/react';
-import React from 'react';
+import { Meta, StoryFn } from '@storybook/react';
 
 import { FeatureState } from '@grafana/data';
 import { InfoBox, FeatureInfoBox, VerticalGroup } from '@grafana/ui';
@@ -24,7 +23,7 @@ const meta: Meta = {
   },
   argTypes: {
     featureState: {
-      control: { type: 'select', options: ['alpha', 'beta', undefined] },
+      control: { type: 'select', options: ['experimental', 'preview'] },
     },
   },
 };
@@ -33,7 +32,7 @@ const defaultProps: FeatureInfoBoxProps = {
   title: 'A title',
   severity: 'info',
   url: 'http://www.grafana.com',
-  featureState: FeatureState.beta,
+  featureState: FeatureState.preview,
 
   children: (
     <p>
@@ -45,18 +44,18 @@ const defaultProps: FeatureInfoBoxProps = {
   ),
 };
 
-const InfoBoxTemplate: ComponentStory<typeof InfoBox> = (args) => {
+const InfoBoxTemplate: StoryFn<typeof InfoBox> = (args) => {
   return (
     <VerticalGroup>
       <div>Deprecrated component, use Alert with info severity</div>
-      <InfoBox {...args} />;
+      <InfoBox {...args} />
     </VerticalGroup>
   );
 };
 export const infoBox = InfoBoxTemplate.bind({});
 infoBox.args = defaultProps;
 
-const FeatureInfoBoxTemplate: ComponentStory<typeof FeatureInfoBox> = (args) => {
+const FeatureInfoBoxTemplate: StoryFn<typeof FeatureInfoBox> = (args) => {
   return (
     <VerticalGroup>
       <div>Deprecrated component, use Alert with info severity</div>

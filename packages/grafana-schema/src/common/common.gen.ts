@@ -9,6 +9,16 @@
 
 
 /**
+ * A topic is attached to DataFrame metadata in query results.
+ * This specifies where the data should be used.
+ */
+export enum DataTopic {
+  AlertStates = 'alertStates',
+  Annotations = 'annotations',
+  Series = 'series',
+}
+
+/**
  * TODO docs
  */
 export interface DataSourceJsonData {
@@ -33,9 +43,7 @@ export interface DataQuery {
    */
   datasource?: unknown;
   /**
-   * true if query is disabled (ie should not be returned to the dashboard)
-   * Note this does not always imply that the query should not be executed since
-   * the results from a hidden query may be used as the input to other queries (SSE etc)
+   * If hide is set to true, Grafana will filter out the response(s) associated with this query before returning it to the panel.
    */
   hide?: boolean;
   /**
@@ -52,24 +60,55 @@ export interface DataQuery {
 }
 
 export interface BaseDimensionConfig {
+  /**
+   * fixed: T -- will be added by each element
+   */
   field?: string;
-  fixed: (string | number);
+}
+
+export enum ScaleDimensionMode {
+  Linear = 'linear',
+  Quad = 'quad',
 }
 
 export interface ScaleDimensionConfig extends BaseDimensionConfig {
+  fixed?: number;
   max: number;
   min: number;
+  mode?: ScaleDimensionMode; // | *"linear"
 }
 
-/**
- * This is actually an empty interface used mainly for naming?
- */
-export interface ColorDimensionConfig extends BaseDimensionConfig {}
+export interface ColorDimensionConfig extends BaseDimensionConfig {
+  fixed?: string; // color value
+}
+
+export enum ScalarDimensionMode {
+  Clamped = 'clamped',
+  Mod = 'mod',
+}
+
+export interface ScalarDimensionConfig extends BaseDimensionConfig {
+  fixed?: number;
+  max: number;
+  min: number;
+  mode?: ScalarDimensionMode;
+}
 
 export enum TextDimensionMode {
   Field = 'field',
   Fixed = 'fixed',
   Template = 'template',
+}
+
+export interface TextDimensionConfig extends BaseDimensionConfig {
+  fixed?: string;
+  mode: TextDimensionMode;
+}
+
+export enum ResourceDimensionMode {
+  Field = 'field',
+  Fixed = 'fixed',
+  Mapping = 'mapping',
 }
 
 export interface MapLayerOptions {
@@ -322,6 +361,7 @@ export interface ScaleDistributionConfig {
  * TODO docs
  */
 export interface AxisConfig {
+  axisBorderShow?: boolean;
   axisCenteredZero?: boolean;
   axisColorMode?: AxisColorMode;
   axisGridShow?: boolean;
@@ -367,7 +407,7 @@ export interface HideableFieldConfig {
 /**
  * TODO docs
  */
-export enum GraphTresholdsStyleMode {
+export enum GraphThresholdsStyleMode {
   Area = 'area',
   Dashed = 'dashed',
   DashedAndArea = 'dashed+area',
@@ -381,7 +421,7 @@ export enum GraphTresholdsStyleMode {
  * TODO docs
  */
 export interface GraphThresholdsStyleConfig {
-  mode: GraphTresholdsStyleMode;
+  mode: GraphThresholdsStyleMode;
 }
 
 /**
@@ -513,6 +553,15 @@ export enum BigValueTextMode {
 }
 
 /**
+ * TODO docs
+ */
+export enum PercentChangeColorMode {
+  Inverted = 'inverted',
+  SameAsValue = 'same_as_value',
+  Standard = 'standard',
+}
+
+/**
  * TODO -- should not be table specific!
  * TODO docs
  */
@@ -527,6 +576,10 @@ export type TimelineValueAlignment = ('center' | 'left' | 'right');
  * TODO docs
  */
 export interface VizTextDisplayOptions {
+  /**
+   * Explicit percent text size
+   */
+  percentSize?: number;
   /**
    * Explicit title text size
    */
@@ -561,6 +614,7 @@ export enum SortOrder {
 export interface GraphFieldConfig extends LineConfig, FillConfig, PointsConfig, AxisConfig, BarConfig, StackableFieldConfig, HideableFieldConfig {
   drawStyle?: GraphDrawStyle;
   gradientMode?: GraphGradientMode;
+  insertNulls?: (boolean | number);
   thresholdsStyle?: GraphThresholdsStyleConfig;
   transform?: GraphTransform;
 }
@@ -604,9 +658,30 @@ export enum BarGaugeValueMode {
 }
 
 /**
+ * Allows for the bar gauge name to be placed explicitly
+ */
+export enum BarGaugeNamePlacement {
+  Auto = 'auto',
+  Hidden = 'hidden',
+  Left = 'left',
+  Top = 'top',
+}
+
+/**
+ * Allows for the bar gauge size to be set explicitly
+ */
+export enum BarGaugeSizing {
+  Auto = 'auto',
+  Manual = 'manual',
+}
+
+/**
  * TODO docs
  */
 export interface VizTooltipOptions {
+  hideZeros?: boolean;
+  maxHeight?: number;
+  maxWidth?: number;
   mode: TooltipDisplayMode;
   sort: SortOrder;
 }
@@ -620,11 +695,14 @@ export interface Labels {}
  * modes are deprecated in favor of new cell subOptions
  */
 export enum TableCellDisplayMode {
+  Actions = 'actions',
   Auto = 'auto',
   BasicGauge = 'basic',
   ColorBackground = 'color-background',
   ColorBackgroundSolid = 'color-background-solid',
   ColorText = 'color-text',
+  Custom = 'custom',
+  DataLinks = 'data-links',
   Gauge = 'gauge',
   GradientGauge = 'gradient-gauge',
   Image = 'image',
@@ -664,7 +742,7 @@ export interface TableFooterOptions {
   countRows?: boolean;
   enablePagination?: boolean;
   fields?: Array<string>;
-  reducer: Array<string>;
+  reducer: Array<string>; // actually 1 value
   show: boolean;
 }
 
@@ -678,6 +756,7 @@ export const defaultTableFooterOptions: Partial<TableFooterOptions> = {
  */
 export interface TableAutoCellOptions {
   type: TableCellDisplayMode.Auto;
+  wrapText?: boolean;
 }
 
 /**
@@ -685,6 +764,7 @@ export interface TableAutoCellOptions {
  */
 export interface TableColorTextCellOptions {
   type: TableCellDisplayMode.ColorText;
+  wrapText?: boolean;
 }
 
 /**
@@ -698,7 +778,23 @@ export interface TableJsonViewCellOptions {
  * Json view cell options
  */
 export interface TableImageCellOptions {
+  alt?: string;
+  title?: string;
   type: TableCellDisplayMode.Image;
+}
+
+/**
+ * Show data links in the cell
+ */
+export interface TableDataLinksCellOptions {
+  type: TableCellDisplayMode.DataLinks;
+}
+
+/**
+ * Show actions in the cell
+ */
+export interface TableActionsCellOptions {
+  type: TableCellDisplayMode.Actions;
 }
 
 /**
@@ -714,6 +810,7 @@ export interface TableBarGaugeCellOptions {
  * Sparkline cell options
  */
 export interface TableSparklineCellOptions extends GraphFieldConfig {
+  hideValue?: boolean;
   type: TableCellDisplayMode.Sparkline;
 }
 
@@ -721,14 +818,17 @@ export interface TableSparklineCellOptions extends GraphFieldConfig {
  * Colored background cell options
  */
 export interface TableColoredBackgroundCellOptions {
+  applyToRow?: boolean;
   mode?: TableCellBackgroundDisplayMode;
   type: TableCellDisplayMode.ColorBackground;
+  wrapText?: boolean;
 }
 
 /**
  * Height of a table cell
  */
 export enum TableCellHeight {
+  Auto = 'auto',
   Lg = 'lg',
   Md = 'md',
   Sm = 'sm',
@@ -738,7 +838,7 @@ export enum TableCellHeight {
  * Table cell options. Each cell has a display mode
  * and other potential options for that display.
  */
-export type TableCellOptions = (TableAutoCellOptions | TableSparklineCellOptions | TableBarGaugeCellOptions | TableColoredBackgroundCellOptions | TableColorTextCellOptions | TableImageCellOptions | TableJsonViewCellOptions);
+export type TableCellOptions = (TableAutoCellOptions | TableSparklineCellOptions | TableBarGaugeCellOptions | TableColoredBackgroundCellOptions | TableColorTextCellOptions | TableImageCellOptions | TableDataLinksCellOptions | TableActionsCellOptions | TableJsonViewCellOptions);
 
 /**
  * Use UTC/GMT timezone
@@ -771,9 +871,14 @@ export enum VariableFormatID {
   SQLString = 'sqlstring',
   SingleQuote = 'singlequote',
   Text = 'text',
+  UriEncode = 'uriencode',
 }
 
 export interface DataSourceRef {
+  /**
+   *  Datasource API version
+   */
+  apiVersion?: string;
   /**
    * The plugin type-id
    */
@@ -784,8 +889,12 @@ export interface DataSourceRef {
   uid?: string;
 }
 
-export interface TextDimensionConfig extends BaseDimensionConfig {
-  mode: TextDimensionMode;
+/**
+ * Links to a resource (image/svg path)
+ */
+export interface ResourceDimensionConfig extends BaseDimensionConfig {
+  fixed?: string;
+  mode: ResourceDimensionMode;
 }
 
 export interface FrameGeometrySource {
@@ -846,7 +955,11 @@ export interface TableFieldOptions {
    */
   displayMode?: TableCellDisplayMode;
   filterable?: boolean;
-  hidden?: boolean;
+  hidden?: boolean; // ?? default is missing or false ??
+  /**
+   * Hides any header for a column, useful for columns that show some static content or buttons.
+   */
+  hideHeader?: boolean;
   inspect: boolean;
   minWidth?: number;
   width?: number;

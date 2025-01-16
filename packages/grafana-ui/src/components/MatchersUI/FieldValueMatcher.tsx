@@ -1,5 +1,6 @@
 import { css } from '@emotion/css';
-import React, { useMemo, useCallback } from 'react';
+import { useMemo, useCallback } from 'react';
+import * as React from 'react';
 
 import {
   FieldMatcherID,
@@ -61,7 +62,7 @@ export const FieldValueMatcherEditor = ({ options, onChange }: Props) => {
   );
 
   const opts = options ?? {};
-  const isBool = isBooleanReducer(options.reducer);
+  const isBool = isBooleanReducer(opts.reducer);
 
   return (
     <div className={styles.spot}>
@@ -90,13 +91,13 @@ export const FieldValueMatcherEditor = ({ options, onChange }: Props) => {
 
 const getStyles = (theme: GrafanaTheme2) => {
   return {
-    spot: css`
-      display: flex;
-      flex-direction: row;
-      align-items: center;
-      align-content: flex-end;
-      gap: 4px;
-    `,
+    spot: css({
+      display: 'flex',
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignContent: 'flex-end',
+      gap: '4px',
+    }),
   };
 };
 

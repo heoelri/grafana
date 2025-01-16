@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import React from 'react';
+import * as React from 'react';
 import { select, openMenu } from 'react-select-event';
 
 import * as ui from '@grafana/ui';
@@ -16,6 +16,15 @@ jest.mock('@grafana/ui', () => ({
   CodeEditor: function CodeEditor({ value, onSave }: { value: string; onSave: (newQuery: string) => void }) {
     return <input data-testid="mockeditor" value={value} onChange={(event) => onSave(event.target.value)} />;
   },
+}));
+
+jest.mock('@grafana/runtime', () => ({
+  ...jest.requireActual('@grafana/runtime'),
+  getTemplateSrv: () => ({
+    replace: (val: string) => {
+      return val;
+    },
+  }),
 }));
 
 const defaultProps = {
@@ -100,7 +109,7 @@ describe('VariableEditor:', () => {
     it('should render', async () => {
       render(<VariableEditor {...ARGqueryProps} />);
       await waitFor(() => screen.queryByTestId('mockeditor'));
-      expect(screen.queryByLabelText('Subscriptions')).toBeInTheDocument();
+      await waitFor(() => screen.queryByLabelText('Subscriptions'));
       expect(screen.queryByText('Resource Graph')).toBeInTheDocument();
       expect(screen.queryByLabelText('Select subscription')).not.toBeInTheDocument();
       expect(screen.queryByLabelText('Select query type')).not.toBeInTheDocument();

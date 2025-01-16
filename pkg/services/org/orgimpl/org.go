@@ -27,7 +27,6 @@ func ProvideService(db db.DB, cfg *setting.Cfg, quotaService quota.Service) (org
 			db:      db,
 			dialect: db.GetDialect(),
 			log:     log,
-			cfg:     cfg,
 		},
 		cfg: cfg,
 		log: log,
@@ -139,11 +138,6 @@ func (s *Service) UpdateAddress(ctx context.Context, cmd *org.UpdateOrgAddressCo
 	return s.store.UpdateAddress(ctx, cmd)
 }
 
-// TODO: refactor service to call store CRUD method
-func (s *Service) Delete(ctx context.Context, cmd *org.DeleteOrgCommand) error {
-	return s.store.Delete(ctx, cmd)
-}
-
 func (s *Service) GetOrCreate(ctx context.Context, orgName string) (int64, error) {
 	var orga = &org.Org{}
 	var err error
@@ -240,4 +234,8 @@ func readQuotaConfig(cfg *setting.Cfg) (*quota.Map, error) {
 	// orgs per user
 	limits.Set(userTag, cfg.Quota.User.Org)
 	return limits, nil
+}
+
+func (s *Service) RegisterDelete(query string) {
+	s.store.RegisterDelete(query)
 }

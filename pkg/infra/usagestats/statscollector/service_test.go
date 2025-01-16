@@ -23,6 +23,7 @@ import (
 	"github.com/grafana/grafana/pkg/registry"
 	"github.com/grafana/grafana/pkg/services/datasources"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
+	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginstore"
 	"github.com/grafana/grafana/pkg/services/stats"
 	"github.com/grafana/grafana/pkg/services/stats/statstest"
 	"github.com/grafana/grafana/pkg/setting"
@@ -84,30 +85,27 @@ func TestTotalStatsUpdate(t *testing.T) {
 var _ registry.ProvidesUsageStats = (*dummyUsageStatProvider)(nil)
 
 type dummyUsageStatProvider struct {
-	stats map[string]interface{}
+	stats map[string]any
 }
 
-func (d dummyUsageStatProvider) GetUsageStats(ctx context.Context) map[string]interface{} {
+func (d dummyUsageStatProvider) GetUsageStats(ctx context.Context) map[string]any {
 	return d.stats
 }
 
 func TestUsageStatsProviders(t *testing.T) {
-	provider1 := &dummyUsageStatProvider{stats: map[string]interface{}{"my_stat_1": "val1", "my_stat_2": "val2"}}
-	provider2 := &dummyUsageStatProvider{stats: map[string]interface{}{"my_stat_x": "valx", "my_stat_z": "valz"}}
+	provider := &dummyUsageStatProvider{stats: map[string]any{"my_stat_x": "valx", "my_stat_z": "valz"}}
 
 	store := dbtest.NewFakeDB()
 	statsService := statstest.NewFakeService()
 	mockSystemStats(statsService)
 	s := createService(t, setting.NewCfg(), store, statsService)
-	s.RegisterProviders([]registry.ProvidesUsageStats{provider1, provider2})
+	s.RegisterProviders([]registry.ProvidesUsageStats{provider})
 
-	m, err := s.collectAdditionalMetrics(context.Background())
+	report, err := s.usageStats.GetUsageReport(context.Background())
 	require.NoError(t, err, "Expected no error")
 
-	assert.Equal(t, "val1", m["my_stat_1"])
-	assert.Equal(t, "val2", m["my_stat_2"])
-	assert.Equal(t, "valx", m["my_stat_x"])
-	assert.Equal(t, "valz", m["my_stat_z"])
+	assert.Equal(t, "valx", report.Metrics["my_stat_x"])
+	assert.Equal(t, "valz", report.Metrics["my_stat_z"])
 }
 
 func TestFeatureUsageStats(t *testing.T) {
@@ -128,32 +126,26 @@ func TestCollectingUsageStats(t *testing.T) {
 	statsService := statstest.NewFakeService()
 	expectedDataSources := []*datasources.DataSource{
 		{
-			JsonData: simplejson.NewFromAny(map[string]interface{}{
-				"esVersion": "2.0.0",
-			}),
+			JsonData: simplejson.NewFromAny(map[string]any{}),
 		},
 		{
-			JsonData: simplejson.NewFromAny(map[string]interface{}{
-				"esVersion": "2.0.0",
-			}),
+			JsonData: simplejson.NewFromAny(map[string]any{}),
 		},
 		{
-			JsonData: simplejson.NewFromAny(map[string]interface{}{
-				"esVersion": "70.1.1",
-			}),
+			JsonData: simplejson.NewFromAny(map[string]any{}),
 		},
 	}
 
 	s := createService(t, &setting.Cfg{
 		ReportingEnabled:     true,
 		BuildVersion:         "5.0.0",
-		AnonymousEnabled:     true,
+		Anonymous:            setting.AnonymousSettings{Enabled: true},
 		BasicAuthEnabled:     true,
 		LDAPAuthEnabled:      true,
-		AuthProxyEnabled:     true,
+		AuthProxy:            setting.AuthProxySettings{Enabled: true},
 		Packaging:            "deb",
 		ReportingDistributor: "hosted-grafana",
-		RemoteCacheOptions: &setting.RemoteCacheOptions{
+		RemoteCacheOptions: &setting.RemoteCacheSettings{
 			Name: "database",
 		},
 	}, sqlStore, statsService,
@@ -183,50 +175,11 @@ func TestCollectingUsageStats(t *testing.T) {
 	assert.EqualValues(t, 11, metrics["stats.data_keys.count"])
 	assert.EqualValues(t, 3, metrics["stats.active_data_keys.count"])
 	assert.EqualValues(t, 5, metrics["stats.public_dashboards.count"])
+	assert.EqualValues(t, 3, metrics["stats.correlations.count"])
 
 	assert.InDelta(t, int64(65), metrics["stats.uptime"], 6)
 }
 
-func TestElasticStats(t *testing.T) {
-	sqlStore := dbtest.NewFakeDB()
-	statsService := statstest.NewFakeService()
-
-	expectedDataSources := []*datasources.DataSource{
-		{
-			JsonData: simplejson.NewFromAny(map[string]interface{}{
-				"esVersion": "2.0.0",
-			}),
-		},
-		{
-			JsonData: simplejson.NewFromAny(map[string]interface{}{
-				"esVersion": "2.0.0",
-			}),
-		},
-		{
-			JsonData: simplejson.NewFromAny(map[string]interface{}{
-				"esVersion": "70.1.1",
-			}),
-		},
-	}
-
-	s := createService(t, &setting.Cfg{
-		ReportingEnabled:     true,
-		BuildVersion:         "5.0.0",
-		AnonymousEnabled:     true,
-		BasicAuthEnabled:     true,
-		LDAPAuthEnabled:      true,
-		AuthProxyEnabled:     true,
-		Packaging:            "deb",
-		ReportingDistributor: "hosted-grafana",
-	}, sqlStore, statsService,
-		withDatasources(mockDatasourceService{datasources: expectedDataSources}))
-
-	metrics, err := s.collectElasticStats(context.Background())
-	require.NoError(t, err)
-
-	assert.EqualValues(t, 2, metrics["stats.ds."+datasources.DS_ES+".v2_0_0.count"])
-	assert.EqualValues(t, 1, metrics["stats.ds."+datasources.DS_ES+".v70_1_1.count"])
-}
 func TestDatasourceStats(t *testing.T) {
 	sqlStore := dbtest.NewFakeDB()
 	statsService := statstest.NewFakeService()
@@ -250,24 +203,6 @@ func TestDatasourceStats(t *testing.T) {
 		{
 			Type:  "unknown_ds2",
 			Count: 12,
-		},
-	}
-
-	_ = []*datasources.DataSource{
-		{
-			JsonData: simplejson.NewFromAny(map[string]interface{}{
-				"esVersion": 2,
-			}),
-		},
-		{
-			JsonData: simplejson.NewFromAny(map[string]interface{}{
-				"esVersion": 2,
-			}),
-		},
-		{
-			JsonData: simplejson.NewFromAny(map[string]interface{}{
-				"esVersion": 70,
-			}),
 		},
 	}
 
@@ -400,6 +335,7 @@ func mockSystemStats(statsService *statstest.FakeService) {
 		DataKeys:                  11,
 		ActiveDataKeys:            3,
 		PublicDashboards:          5,
+		Correlations:              3,
 	}
 }
 
@@ -416,8 +352,8 @@ func (m *mockSocial) GetOAuthProviders() map[string]bool {
 func setupSomeDataSourcePlugins(t *testing.T, s *Service) {
 	t.Helper()
 
-	s.plugins = &plugins.FakePluginStore{
-		PluginList: []plugins.PluginDTO{
+	s.plugins = &pluginstore.FakePluginStore{
+		PluginList: []pluginstore.Plugin{
 			{JSONData: plugins.JSONData{ID: datasources.DS_ES}, Signature: "internal"},
 			{JSONData: plugins.JSONData{ID: datasources.DS_PROMETHEUS}, Signature: "internal"},
 			{JSONData: plugins.JSONData{ID: datasources.DS_GRAPHITE}, Signature: "internal"},
@@ -442,10 +378,10 @@ func createService(t testing.TB, cfg *setting.Cfg, store db.DB, statsService sta
 		cfg,
 		store,
 		&mockSocial{},
-		&plugins.FakePluginStore{},
-		featuremgmt.WithFeatures("feature1", "feature2"),
+		&pluginstore.FakePluginStore{},
+		featuremgmt.WithManager("feature1", "feature2"),
 		o.datasources,
-		httpclient.NewProvider(),
+		httpclient.NewProvider(sdkhttpclient.ProviderOptions{Middlewares: []sdkhttpclient.Middleware{}}),
 	)
 }
 

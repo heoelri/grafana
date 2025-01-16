@@ -1,17 +1,15 @@
 package codegen
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
 
-	copenapi "cuelang.org/go/encoding/openapi"
-	"github.com/dave/dst/dstutil"
+	"cuelang.org/go/cue"
 	"github.com/grafana/codejen"
-	corecodegen "github.com/grafana/grafana/pkg/codegen"
-	"github.com/grafana/grafana/pkg/plugins/pfs"
-	"github.com/grafana/thema/encoding/gocode"
-	"github.com/grafana/thema/encoding/openapi"
+	"github.com/grafana/cog"
+	"github.com/grafana/grafana/pkg/plugins/codegen/pfs"
 )
 
 // TODO this is duplicative of other Go type jennies. Remove it in favor of a better-abstracted version in thema itself
@@ -30,22 +28,25 @@ func (j *pgoJenny) JennyName() string {
 }
 
 func (j *pgoJenny) Generate(decl *pfs.PluginDecl) (*codejen.File, error) {
-	b := decl.PluginMeta.Backend
-	if b == nil || !*b || !decl.HasSchema() {
+	hasBackend := decl.PluginMeta.Backend
+	// We skip elasticsearch since we have problems with the generated file.
+	// This is temporal until we migrate to the new system.
+	if hasBackend == nil || !*hasBackend {
 		return nil, nil
 	}
 
-	slotname := strings.ToLower(decl.SchemaInterface.Name())
-	byt, err := gocode.GenerateTypesOpenAPI(decl.Lineage.Latest(), &gocode.TypeConfigOpenAPI{
-		Config: &openapi.Config{
-			Group: decl.SchemaInterface.IsGroup(),
-			Config: &copenapi.Config{
-				ExpandReferences: true,
-			},
-		},
-		PackageName: slotname,
-		ApplyFuncs:  []dstutil.ApplyFunc{corecodegen.PrefixDropper(decl.Lineage.Name())},
-	})
+	slotName := strings.ToLower(decl.SchemaInterface.Name)
+	cueValue := decl.CueFile.LookupPath(cue.ParsePath("lineage.schemas[0].schema"))
+	name, err := decl.CueFile.LookupPath(cue.MakePath(cue.Str("name"))).String()
+	if err != nil {
+		return nil, err
+	}
+
+	byt, err := cog.TypesFromSchema().
+		CUEValue(slotName, cueValue, cog.ForceEnvelope(name)).
+		Golang(cog.GoConfig{}).
+		Run(context.Background())
+
 	if err != nil {
 		return nil, err
 	}
@@ -56,6 +57,6 @@ func (j *pgoJenny) Generate(decl *pfs.PluginDecl) (*codejen.File, error) {
 	if pluginfolder == "testdata" {
 		pluginfolder = "testdatasource"
 	}
-	filename := fmt.Sprintf("types_%s_gen.go", slotname)
-	return codejen.NewFile(filepath.Join(j.root, pluginfolder, "kinds", slotname, filename), byt, j), nil
+	filename := fmt.Sprintf("types_%s_gen.go", slotName)
+	return codejen.NewFile(filepath.Join(j.root, pluginfolder, "kinds", slotName, filename), byt[0].Data, j), nil
 }

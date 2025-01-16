@@ -1,5 +1,4 @@
 import { css, cx } from '@emotion/css';
-import React from 'react';
 
 import { GrafanaTheme2 } from '@grafana/data';
 
@@ -31,7 +30,7 @@ export function PanelDescription({ description, className }: Props) {
   return description !== '' ? (
     <Tooltip interactive content={getDescriptionContent}>
       <TitleItem className={cx(className, styles.description)}>
-        <Icon name="info-circle" size="md" title="description" />
+        <Icon name="info-circle" size="md" />
       </TitleItem>
     </Tooltip>
   ) : null;

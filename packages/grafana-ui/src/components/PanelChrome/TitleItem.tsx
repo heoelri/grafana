@@ -1,5 +1,6 @@
 import { cx, css } from '@emotion/css';
-import React, { forwardRef } from 'react';
+import { forwardRef } from 'react';
+import * as React from 'react';
 
 import { GrafanaTheme2, LinkModel, LinkTarget } from '@grafana/data';
 
@@ -60,7 +61,7 @@ const getStyles = (theme: GrafanaTheme2) => {
     label: 'panel-header-item',
     cursor: 'auto',
     border: 'none',
-    borderRadius: `${theme.shape.borderRadius()}`,
+    borderRadius: `${theme.shape.radius.default}`,
     padding: `${theme.spacing(0, 1)}`,
     height: `${theme.spacing(theme.components.panel.headerHeight)}`,
     display: 'flex',

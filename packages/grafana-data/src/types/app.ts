@@ -3,7 +3,13 @@ import { ComponentType } from 'react';
 import { KeyValue } from './data';
 import { NavModel } from './navModel';
 import { PluginMeta, GrafanaPlugin, PluginIncludeType } from './plugin';
-import { extensionLinkConfigIsValid, type PluginExtensionCommand, type PluginExtensionLink } from './pluginExtensions';
+import {
+  type PluginExtensionLinkConfig,
+  PluginExtensionComponentConfig,
+  PluginExtensionExposedComponentConfig,
+  PluginExtensionAddedComponentConfig,
+  PluginExtensionAddedLinkConfig,
+} from './pluginExtensions';
 
 /**
  * @public
@@ -50,44 +56,10 @@ export interface AppPluginMeta<T extends KeyValue = KeyValue> extends PluginMeta
   // TODO anything specific to apps?
 }
 
-/**
- * The `configure()` function can only update certain properties of the extension, and due to this
- * it only receives a subset of the original extension object.
- */
-export type AppPluginExtensionLink = Pick<PluginExtensionLink, 'description' | 'path' | 'title'>;
-
-// A list of helpers that can be used in the command handler
-export type AppPluginExtensionCommandHelpers = {
-  // Opens a modal dialog and renders the provided React component inside it
-  openModal: (options: {
-    // The title of the modal
-    title: string;
-    // A React element that will be rendered inside the modal
-    body: React.ElementType<{ onDismiss?: () => void }>;
-  }) => void;
-};
-
-export type AppPluginExtensionCommand = Pick<PluginExtensionCommand, 'description' | 'title'>;
-
-export type AppPluginExtensionLinkConfig<C extends object = object> = {
-  title: string;
-  description: string;
-  placement: string;
-  path: string;
-  configure?: (context?: C) => Partial<AppPluginExtensionLink> | undefined;
-};
-
-export type AppPluginExtensionCommandConfig<C extends object = object> = {
-  title: string;
-  description: string;
-  placement: string;
-  handler: (context?: C, helpers?: AppPluginExtensionCommandHelpers) => void;
-  configure?: (context?: C) => Partial<AppPluginExtensionCommand> | undefined;
-};
-
 export class AppPlugin<T extends KeyValue = KeyValue> extends GrafanaPlugin<AppPluginMeta<T>> {
-  private linkExtensions: AppPluginExtensionLinkConfig[] = [];
-  private commandExtensions: AppPluginExtensionCommandConfig[] = [];
+  private _exposedComponentConfigs: PluginExtensionExposedComponentConfig[] = [];
+  private _addedComponentConfigs: PluginExtensionAddedComponentConfig[] = [];
+  private _addedLinkConfigs: PluginExtensionAddedLinkConfig[] = [];
 
   // Content under: /a/${plugin-id}/*
   root?: ComponentType<AppRootProps<T>>;
@@ -110,7 +82,7 @@ export class AppPlugin<T extends KeyValue = KeyValue> extends GrafanaPlugin<AppP
     return this;
   }
 
-  setComponentsFromLegacyExports(pluginExports: any) {
+  setComponentsFromLegacyExports(pluginExports: System.Module) {
     if (pluginExports.ConfigCtrl) {
       this.angularConfigCtrl = pluginExports.ConfigCtrl;
     }
@@ -129,28 +101,53 @@ export class AppPlugin<T extends KeyValue = KeyValue> extends GrafanaPlugin<AppP
     }
   }
 
-  get extensionLinks(): AppPluginExtensionLinkConfig[] {
-    return this.linkExtensions;
+  get exposedComponentConfigs() {
+    return this._exposedComponentConfigs;
   }
 
-  get extensionCommands(): AppPluginExtensionCommandConfig[] {
-    return this.commandExtensions;
+  get addedComponentConfigs() {
+    return this._addedComponentConfigs;
   }
 
-  configureExtensionLink<C extends object>(config: AppPluginExtensionLinkConfig<C>) {
-    const { path, description, title, placement } = config;
+  get addedLinkConfigs() {
+    return this._addedLinkConfigs;
+  }
 
-    if (!extensionLinkConfigIsValid({ path, description, title, placement })) {
-      console.warn('[Plugins] Disabled extension because configureExtensionLink was called with an invalid object.');
-      return this;
-    }
+  addLink<Context extends object>(linkConfig: PluginExtensionAddedLinkConfig<Context>) {
+    this._addedLinkConfigs.push(linkConfig as PluginExtensionAddedLinkConfig);
 
-    this.linkExtensions.push(config as AppPluginExtensionLinkConfig);
     return this;
   }
 
-  configureExtensionCommand<C extends object>(config: AppPluginExtensionCommandConfig<C>) {
-    this.commandExtensions.push(config as AppPluginExtensionCommandConfig);
+  addComponent<Props = {}>(addedComponentConfig: PluginExtensionAddedComponentConfig<Props>) {
+    this._addedComponentConfigs.push(addedComponentConfig as PluginExtensionAddedComponentConfig);
+
+    return this;
+  }
+
+  exposeComponent<Props = {}>(componentConfig: PluginExtensionExposedComponentConfig<Props>) {
+    this._exposedComponentConfigs.push(componentConfig as PluginExtensionExposedComponentConfig);
+
+    return this;
+  }
+
+  /** @deprecated Use .addLink() instead */
+  configureExtensionLink<Context extends object>(extension: Omit<PluginExtensionLinkConfig<Context>, 'type'>) {
+    this.addLink({
+      targets: [extension.extensionPointId],
+      ...extension,
+    });
+
+    return this;
+  }
+  /** @deprecated Use .addComponent() instead */
+  configureExtensionComponent<Props = {}>(extension: Omit<PluginExtensionComponentConfig<Props>, 'type'>) {
+    this.addComponent({
+      targets: [extension.extensionPointId],
+      ...extension,
+      component: extension.component,
+    });
+
     return this;
   }
 }
@@ -160,6 +157,14 @@ export class AppPlugin<T extends KeyValue = KeyValue> extends GrafanaPlugin<AppP
  * @internal
  */
 export enum FeatureState {
+  /** @deprecated in favor of experimental */
   alpha = 'alpha',
+  /** @deprecated in favor of preview */
   beta = 'beta',
+  /** used to mark experimental features with high/unknown risk */
+  experimental = 'experimental',
+  /** used to mark features that are in public preview with medium/hight risk */
+  privatePreview = 'private preview',
+  /** used to mark features that are in public preview with low/medium risk, or as a shared badge for public and private previews */
+  preview = 'preview',
 }

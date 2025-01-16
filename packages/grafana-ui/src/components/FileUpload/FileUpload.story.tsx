@@ -1,16 +1,12 @@
-import { ComponentMeta, ComponentStory } from '@storybook/react';
-import React from 'react';
+import { Meta, StoryFn } from '@storybook/react';
 
 import { FileUpload } from '@grafana/ui';
 
-import { withCenteredStory } from '../../utils/storybook/withCenteredStory';
-
 import mdx from './FileUpload.mdx';
 
-const meta: ComponentMeta<typeof FileUpload> = {
+const meta: Meta<typeof FileUpload> = {
   title: 'Forms/FileUpload',
   component: FileUpload,
-  decorators: [withCenteredStory],
   parameters: {
     docs: {
       page: mdx,
@@ -29,7 +25,7 @@ const meta: ComponentMeta<typeof FileUpload> = {
   },
 };
 
-export const Basic: ComponentStory<typeof FileUpload> = (args) => {
+export const Basic: StoryFn<typeof FileUpload> = (args) => {
   return (
     <FileUpload
       size={args.size}

@@ -1,8 +1,9 @@
+import { v4 as uuidv4 } from 'uuid';
+
 import { DataSourceInstanceSettings, TimeRange } from '@grafana/data';
 import { CompletionItemKind, LanguageDefinition, TableIdentifier } from '@grafana/experimental';
-import { SqlDatasource } from 'app/features/plugins/sql/datasource/SqlDatasource';
-import { DB, SQLQuery } from 'app/features/plugins/sql/types';
-import { formatSQL } from 'app/features/plugins/sql/utils/formatSQL';
+import { config } from '@grafana/runtime';
+import { COMMON_FNS, DB, FuncParameter, MACRO_FUNCTIONS, SQLQuery, SqlDatasource, formatSQL } from '@grafana/sql';
 
 import { mapFieldsToTypes } from './fields';
 import { buildColumnQuery, buildTableQuery, showDatabases } from './mySqlMetaQuery';
@@ -29,11 +30,13 @@ export class MySqlDatasource extends SqlDatasource {
     const args = {
       getMeta: (identifier?: TableIdentifier) => this.fetchMeta(identifier),
     };
+
     this.sqlLanguageDefinition = {
       id: 'mysql',
       completionProvider: getSqlCompletionProvider(args),
       formatter: formatSQL,
     };
+
     return this.sqlLanguageDefinition;
   }
 
@@ -52,7 +55,7 @@ export class MySqlDatasource extends SqlDatasource {
       return [];
     }
     const queryString = buildColumnQuery(query.table, query.dataset);
-    const frame = await this.runSql<string[]>(queryString, { refId: 'fields' });
+    const frame = await this.runSql<string[]>(queryString, { refId: `fields-${uuidv4()}` });
     const fields = frame.map((f) => ({
       name: f[0],
       text: f[0],
@@ -84,19 +87,35 @@ export class MySqlDatasource extends SqlDatasource {
     }
   }
 
+  getFunctions = (): ReturnType<DB['functions']> => {
+    const fns = [...COMMON_FNS, { name: 'VARIANCE' }, { name: 'STDDEV' }];
+    if (config.featureToggles.sqlQuerybuilderFunctionParameters) {
+      const columnParam: FuncParameter = {
+        name: 'Column',
+        required: true,
+        options: (query) => this.fetchFields(query),
+      };
+
+      return [...MACRO_FUNCTIONS(columnParam), ...fns.map((fn) => ({ ...fn, parameters: [columnParam] }))];
+    } else {
+      return fns;
+    }
+  };
+
   getDB(): DB {
     if (this.db !== undefined) {
       return this.db;
     }
+
     return {
       datasets: () => this.fetchDatasets(),
       tables: (dataset?: string) => this.fetchTables(dataset),
       fields: (query: SQLQuery) => this.fetchFields(query),
-      validateQuery: (query: SQLQuery, range?: TimeRange) =>
+      validateQuery: (query: SQLQuery, _range?: TimeRange) =>
         Promise.resolve({ query, error: '', isError: false, isValid: true }),
       dsID: () => this.id,
       toRawSql,
-      functions: () => ['VARIANCE', 'STDDEV'],
+      functions: () => this.getFunctions(),
       getEditorLanguageDefinition: () => this.getSqlLanguageDefinition(),
     };
   }

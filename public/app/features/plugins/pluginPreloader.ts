@@ -1,28 +1,40 @@
-import type { AppPluginExtensionCommandConfig, AppPluginExtensionLinkConfig } from '@grafana/data';
+import type { PluginExtensionAddedLinkConfig, PluginExtensionExposedComponentConfig } from '@grafana/data';
+import { PluginExtensionAddedComponentConfig } from '@grafana/data/src/types/pluginExtensions';
 import type { AppPluginConfig } from '@grafana/runtime';
+import { getPluginSettings } from 'app/features/plugins/pluginSettings';
 
-import * as pluginLoader from './plugin_loader';
+import { importAppPlugin } from './plugin_loader';
 
 export type PluginPreloadResult = {
   pluginId: string;
-  linkExtensions: AppPluginExtensionLinkConfig[];
-  commandExtensions: AppPluginExtensionCommandConfig[];
   error?: unknown;
+  exposedComponentConfigs: PluginExtensionExposedComponentConfig[];
+  addedComponentConfigs?: PluginExtensionAddedComponentConfig[];
+  addedLinkConfigs?: PluginExtensionAddedLinkConfig[];
 };
 
-export async function preloadPlugins(apps: Record<string, AppPluginConfig> = {}): Promise<PluginPreloadResult[]> {
-  const pluginsToPreload = Object.values(apps).filter((app) => app.preload);
-  return Promise.all(pluginsToPreload.map(preload));
+const preloadedAppPlugins = new Set<string>();
+const isNotYetPreloaded = ({ id }: AppPluginConfig) => !preloadedAppPlugins.has(id);
+const markAsPreloaded = (apps: AppPluginConfig[]) => apps.forEach(({ id }) => preloadedAppPlugins.add(id));
+
+export async function preloadPlugins(apps: AppPluginConfig[] = []) {
+  const appPluginsToPreload = apps.filter(isNotYetPreloaded);
+
+  if (appPluginsToPreload.length === 0) {
+    return;
+  }
+
+  markAsPreloaded(apps);
+
+  await Promise.all(appPluginsToPreload.map(preload));
 }
 
-async function preload(config: AppPluginConfig): Promise<PluginPreloadResult> {
-  const { path, version, id: pluginId } = config;
+async function preload(config: AppPluginConfig) {
   try {
-    const { plugin } = await pluginLoader.importPluginModule(path, version);
-    const { linkExtensions = [], commandExtensions = [] } = plugin;
-    return { pluginId, linkExtensions, commandExtensions };
+    const meta = await getPluginSettings(config.id);
+
+    await importAppPlugin(meta);
   } catch (error) {
-    console.error(`[Plugins] Failed to preload plugin: ${path} (version: ${version})`, error);
-    return { pluginId, linkExtensions: [], commandExtensions: [], error };
+    console.error(`[Plugins] Failed to preload plugin: ${config.path} (version: ${config.version})`, error);
   }
 }

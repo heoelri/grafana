@@ -16,6 +16,7 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"net"
@@ -23,9 +24,10 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
 
-	"github.com/grafana/grafana/pkg/util/errutil"
-	"github.com/grafana/grafana/pkg/util/errutil/errhttp"
+	"github.com/grafana/grafana/pkg/apimachinery/errutil"
+	"github.com/grafana/grafana/pkg/util/errhttp"
 )
 
 // Context represents the runtime context of current request of Macaron instance.
@@ -38,7 +40,7 @@ type Context struct {
 	template *template.Template
 }
 
-var errMissingWrite = errutil.NewBase(errutil.StatusInternal, "web.missingWrite")
+var errMissingWrite = errutil.Internal("web.missingWrite")
 
 func (ctx *Context) run() {
 	h := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
@@ -100,15 +102,18 @@ const (
 )
 
 // HTML renders the HTML with default template set.
-func (ctx *Context) HTML(status int, name string, data interface{}) {
+func (ctx *Context) HTML(status int, name string, data any) {
 	ctx.Resp.Header().Set(headerContentType, contentTypeHTML)
 	ctx.Resp.WriteHeader(status)
 	if err := ctx.template.ExecuteTemplate(ctx.Resp, name, data); err != nil {
+		if errors.Is(err, syscall.EPIPE) { // Client has stopped listening.
+			return
+		}
 		panic(fmt.Sprintf("Context.HTML - Error rendering template: %s. You may need to build frontend assets \n %s", name, err.Error()))
 	}
 }
 
-func (ctx *Context) JSON(status int, data interface{}) {
+func (ctx *Context) JSON(status int, data any) {
 	ctx.Resp.Header().Set(headerContentType, contentTypeJSON)
 	ctx.Resp.WriteHeader(status)
 	enc := json.NewEncoder(ctx.Resp)
@@ -177,9 +182,27 @@ func (ctx *Context) QueryInt(name string) int {
 	return n
 }
 
+// QueryIntWithDefault returns query result in int type, including a default when the query param is not a valid int.
+func (ctx *Context) QueryIntWithDefault(name string, d int) int {
+	n, err := strconv.Atoi(ctx.Query(name))
+	if err != nil {
+		return d
+	}
+	return n
+}
+
 // QueryInt64 returns query result in int64 type.
 func (ctx *Context) QueryInt64(name string) int64 {
 	n, _ := strconv.ParseInt(ctx.Query(name), 10, 64)
+	return n
+}
+
+// QueryInt64WithDefault returns query result in int64 type, including a default when the query param is not a valid int64.
+func (ctx *Context) QueryInt64WithDefault(name string, d int64) int64 {
+	n, err := strconv.ParseInt(ctx.Query(name), 10, 64)
+	if err != nil {
+		return d
+	}
 	return n
 }
 
@@ -191,4 +214,10 @@ func (ctx *Context) GetCookie(name string) string {
 	}
 	val, _ := url.QueryUnescape(cookie.Value)
 	return val
+}
+
+// QueryFloat64 returns query result in float64 type.
+func (ctx *Context) QueryFloat64(name string) float64 {
+	n, _ := strconv.ParseFloat(ctx.Query(name), 64)
+	return n
 }

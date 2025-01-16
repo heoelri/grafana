@@ -1,22 +1,33 @@
-import { render, waitFor, waitForElementToBeRemoved } from '@testing-library/react';
-import { setupServer } from 'msw/node';
-import React from 'react';
+import * as React from 'react';
 import { FormProvider, useForm } from 'react-hook-form';
-import { TestProvider } from 'test/helpers/TestProvider';
+import { getWrapper, render, waitFor, waitForElementToBeRemoved, within } from 'test/test-utils';
 import { byRole, byTestId, byText } from 'testing-library-selector';
 
-import { selectors } from '@grafana/e2e-selectors/src';
-import { config, setBackendSrv, setDataSourceSrv } from '@grafana/runtime';
-import { backendSrv } from 'app/core/services/backend_srv';
-import 'whatwg-fetch';
+import { MIMIR_DATASOURCE_UID } from 'app/features/alerting/unified/mocks/server/constants';
+import { RuleWithLocation } from 'app/types/unified-alerting';
 
-import { RulerGrafanaRuleDTO } from '../../../types/unified-alerting-dto';
+import { AccessControlAction } from '../../../types';
+import {
+  RulerAlertingRuleDTO,
+  RulerGrafanaRuleDTO,
+  RulerRecordingRuleDTO,
+  RulerRuleDTO,
+} from '../../../types/unified-alerting-dto';
 
-import { CloneRuleEditor } from './CloneRuleEditor';
+import { CloneRuleEditor, cloneRuleDefinition } from './CloneRuleEditor';
 import { ExpressionEditorProps } from './components/rule-editor/ExpressionEditor';
-import { mockDataSource, MockDataSourceSrv, mockRulerAlertingRule, mockRulerGrafanaRule, mockStore } from './mocks';
-import { mockSearchApiResponse } from './mocks/grafanaApi';
+import { setupMswServer } from './mockApi';
+import {
+  grantUserPermissions,
+  mockDataSource,
+  mockRulerAlertingRule,
+  mockRulerGrafanaRule,
+  mockRulerRuleGroup,
+} from './mocks';
+import { grafanaRulerRule } from './mocks/grafanaRulerApi';
 import { mockRulerRulesApiResponse, mockRulerRulesGroupApiResponse } from './mocks/rulerApi';
+import { AlertingQueryRunner } from './state/AlertingQueryRunner';
+import { setupDataSources } from './testSetup/datasources';
 import { RuleFormValues } from './types/rule-form';
 import { Annotation } from './utils/constants';
 import { getDefaultFormValues } from './utils/rule-form';
@@ -29,109 +40,66 @@ jest.mock('./components/rule-editor/ExpressionEditor', () => ({
   ),
 }));
 
-const server = setupServer();
+jest.spyOn(AlertingQueryRunner.prototype, 'run').mockImplementation(() => Promise.resolve());
 
-beforeAll(() => {
-  setBackendSrv(backendSrv);
-  server.listen({ onUnhandledRequest: 'error' });
-});
-
-beforeEach(() => {
-  server.resetHandlers();
-});
-
-afterAll(() => {
-  server.close();
-});
+const server = setupMswServer();
 
 const ui = {
   inputs: {
-    name: byRole('textbox', { name: /rule name name for the alert rule\./i }),
+    name: byRole('textbox', { name: 'name' }),
     expr: byTestId('expr'),
-    folderContainer: byTestId(selectors.components.FolderPicker.containerV2),
+    folderContainer: byTestId('folder-picker'),
     namespace: byTestId('namespace-picker'),
     group: byTestId('group-picker'),
     annotationValue: (idx: number) => byTestId(`annotation-value-${idx}`),
     labelValue: (idx: number) => byTestId(`label-value-${idx}`),
   },
-  loadingIndicator: byText('Loading the rule'),
-  loadingGroupIndicator: byText('Loading...'),
+  loadingIndicator: byText('Loading the rule...'),
 };
 
-function getProvidersWrapper() {
-  return function Wrapper({ children }: React.PropsWithChildren<{}>) {
-    const store = mockStore((store) => {
-      store.unifiedAlerting.dataSources['grafana'] = {
-        loading: false,
-        dispatched: true,
-        result: {
-          id: 'grafana',
-          name: 'grafana',
-          rulerConfig: {
-            dataSourceName: 'grafana',
-            apiVersion: 'legacy',
-          },
-        },
-      };
-      store.unifiedAlerting.dataSources['my-prom-ds'] = {
-        loading: false,
-        dispatched: true,
-        result: {
-          id: 'my-prom-ds',
-          name: 'my-prom-ds',
-          rulerConfig: {
-            dataSourceName: 'my-prom-ds',
-            apiVersion: 'config',
-          },
-        },
-      };
-    });
-
-    const formApi = useForm<RuleFormValues>({ defaultValues: getDefaultFormValues() });
-
-    return (
-      <TestProvider store={store}>
-        <FormProvider {...formApi}>{children}</FormProvider>
-      </TestProvider>
-    );
-  };
+const Providers = getWrapper({ renderWithRouter: true });
+function Wrapper({ children }: React.PropsWithChildren<{}>) {
+  const formApi = useForm<RuleFormValues>({ defaultValues: getDefaultFormValues() });
+  return (
+    <Providers>
+      <FormProvider {...formApi}>{children}</FormProvider>
+    </Providers>
+  );
 }
 
 describe('CloneRuleEditor', function () {
+  grantUserPermissions([AccessControlAction.AlertingRuleExternalRead]);
+
   describe('Grafana-managed rules', function () {
     it('should populate form values from the existing alert rule', async function () {
-      setDataSourceSrv(new MockDataSourceSrv({}));
+      setupDataSources();
 
-      const originRule: RulerGrafanaRuleDTO = mockRulerGrafanaRule(
-        {
-          for: '1m',
-          labels: { severity: 'critical', region: 'nasa' },
-          annotations: { [Annotation.summary]: 'This is a very important alert rule' },
-        },
-        { uid: 'grafana-rule-1', title: 'First Grafana Rule', data: [] }
+      render(
+        <CloneRuleEditor sourceRuleId={{ uid: grafanaRulerRule.grafana_alert.uid, ruleSourceName: 'grafana' }} />,
+        { wrapper: Wrapper }
       );
 
-      mockRulerRulesApiResponse(server, 'grafana', {
-        'folder-one': [{ name: 'group1', interval: '20s', rules: [originRule] }],
-      });
-
-      mockSearchApiResponse(server, []);
-
-      render(<CloneRuleEditor sourceRuleId={{ uid: 'grafana-rule-1', ruleSourceName: 'grafana' }} />, {
-        wrapper: getProvidersWrapper(),
-      });
-
       await waitForElementToBeRemoved(ui.loadingIndicator.query());
-      await waitForElementToBeRemoved(ui.loadingGroupIndicator.query(), { container: ui.inputs.group.get() });
+      await waitFor(() => {
+        expect(within(ui.inputs.group.get()).queryByTestId('Spinner')).not.toBeInTheDocument();
+      });
 
       await waitFor(() => {
-        expect(ui.inputs.name.get()).toHaveValue('First Grafana Rule (copy)');
-        expect(ui.inputs.folderContainer.get()).toHaveTextContent('folder-one');
-        expect(ui.inputs.group.get()).toHaveTextContent('group1');
-        expect(ui.inputs.labelValue(0).get()).toHaveTextContent('critical');
-        expect(ui.inputs.labelValue(1).get()).toHaveTextContent('nasa');
-        expect(ui.inputs.annotationValue(0).get()).toHaveTextContent('This is a very important alert rule');
+        expect(ui.inputs.name.get()).toHaveValue(`${grafanaRulerRule.grafana_alert.title} (copy)`);
       });
+      expect(ui.inputs.folderContainer.get()).toHaveTextContent('Folder A');
+      expect(ui.inputs.group.get()).toHaveTextContent(grafanaRulerRule.grafana_alert.rule_group);
+      expect(
+        byRole('listitem', {
+          name: 'severity: critical',
+        }).get()
+      ).toBeInTheDocument();
+      expect(
+        byRole('listitem', {
+          name: 'region: nasa',
+        }).get()
+      ).toBeInTheDocument();
+      expect(ui.inputs.annotationValue(0).get()).toHaveTextContent(grafanaRulerRule.annotations[Annotation.summary]);
     });
   });
 
@@ -139,13 +107,9 @@ describe('CloneRuleEditor', function () {
     it('should populate form values from the existing alert rule', async function () {
       const dsSettings = mockDataSource({
         name: 'my-prom-ds',
-        uid: 'my-prom-ds',
+        uid: MIMIR_DATASOURCE_UID,
       });
-      config.datasources = {
-        'my-prom-ds': dsSettings,
-      };
-
-      setDataSourceSrv(new MockDataSourceSrv({ 'my-prom-ds': dsSettings }));
+      setupDataSources(dsSettings);
 
       const originRule = mockRulerAlertingRule({
         for: '1m',
@@ -155,44 +119,169 @@ describe('CloneRuleEditor', function () {
         annotations: { [Annotation.summary]: 'This is a very important alert rule' },
       });
 
-      mockRulerRulesApiResponse(server, 'my-prom-ds', {
+      mockRulerRulesApiResponse(server, MIMIR_DATASOURCE_UID, {
         'namespace-one': [{ name: 'group1', interval: '20s', rules: [originRule] }],
       });
 
-      mockRulerRulesGroupApiResponse(server, 'my-prom-ds', 'namespace-one', 'group1', {
+      mockRulerRulesGroupApiResponse(server, MIMIR_DATASOURCE_UID, 'namespace-one', 'group1', {
         name: 'group1',
         interval: '20s',
         rules: [originRule],
       });
 
-      mockSearchApiResponse(server, []);
-
       render(
         <CloneRuleEditor
           sourceRuleId={{
-            uid: 'prom-rule-1',
             ruleSourceName: 'my-prom-ds',
             namespace: 'namespace-one',
             groupName: 'group1',
+            ruleName: 'First Ruler Rule',
             rulerRuleHash: hashRulerRule(originRule),
           }}
         />,
-        {
-          wrapper: getProvidersWrapper(),
-        }
+        { wrapper: Wrapper }
       );
 
       await waitForElementToBeRemoved(ui.loadingIndicator.query());
 
       await waitFor(() => {
         expect(ui.inputs.name.get()).toHaveValue('First Ruler Rule (copy)');
-        expect(ui.inputs.expr.get()).toHaveValue('vector(1) > 0');
-        expect(ui.inputs.namespace.get()).toHaveTextContent('namespace-one');
-        expect(ui.inputs.group.get()).toHaveTextContent('group1');
-        expect(ui.inputs.labelValue(0).get()).toHaveTextContent('critical');
-        expect(ui.inputs.labelValue(1).get()).toHaveTextContent('nasa');
-        expect(ui.inputs.annotationValue(0).get()).toHaveTextContent('This is a very important alert rule');
       });
+      expect(ui.inputs.expr.get()).toHaveValue('vector(1) > 0');
+      expect(ui.inputs.namespace.get()).toHaveTextContent('namespace-one');
+      expect(ui.inputs.group.get()).toHaveTextContent('group1');
+      expect(
+        byRole('listitem', {
+          name: 'severity: critical',
+        }).get()
+      ).toBeInTheDocument();
+      expect(
+        byRole('listitem', {
+          name: 'region: nasa',
+        }).get()
+      ).toBeInTheDocument();
+      expect(ui.inputs.annotationValue(0).get()).toHaveTextContent('This is a very important alert rule');
+    });
+  });
+
+  describe('cloneRuleDefinition', () => {
+    it("Should change the cloned rule's name accordingly for Grafana rules", () => {
+      const rule: RulerGrafanaRuleDTO = mockRulerGrafanaRule(
+        {
+          for: '1m',
+          labels: { severity: 'critical', region: 'nasa' },
+          annotations: { [Annotation.summary]: 'This is a very important alert rule' },
+        },
+        { uid: 'grafana-rule-1', title: 'First Grafana Rule', data: [] }
+      );
+
+      const originalRule: RuleWithLocation<RulerGrafanaRuleDTO> = {
+        ruleSourceName: 'my-prom-ds',
+        namespace: 'namespace-one',
+        group: mockRulerRuleGroup(),
+        rule,
+      };
+
+      const clonedRule: RuleWithLocation<RulerRuleDTO> = cloneRuleDefinition(originalRule);
+
+      const grafanaRule: RulerGrafanaRuleDTO = clonedRule.rule as RulerGrafanaRuleDTO;
+
+      expect(originalRule.rule.grafana_alert.title).toEqual('First Grafana Rule');
+      expect(grafanaRule.grafana_alert.title).toEqual('First Grafana Rule (copy)');
+    });
+
+    it("Should change the cloned rule's name accordingly for Ruler rules", () => {
+      const rule: RulerAlertingRuleDTO = mockRulerAlertingRule({
+        for: '1m',
+        alert: 'First Ruler Rule',
+        expr: 'vector(1) > 0',
+        labels: { severity: 'critical', region: 'nasa' },
+        annotations: { [Annotation.summary]: 'This is a very important alert rule' },
+      });
+
+      const originalRule: RuleWithLocation<RulerAlertingRuleDTO> = {
+        ruleSourceName: 'my-prom-ds',
+        namespace: 'namespace-one',
+        group: mockRulerRuleGroup(),
+        rule,
+      };
+
+      const clonedRule: RuleWithLocation<RulerRuleDTO> = cloneRuleDefinition(originalRule);
+
+      const alertingRule: RulerAlertingRuleDTO = clonedRule.rule as RulerAlertingRuleDTO;
+
+      expect(originalRule.rule.alert).toEqual('First Ruler Rule');
+      expect(alertingRule.alert).toEqual('First Ruler Rule (copy)');
+    });
+
+    it("Should change the cloned rule's name accordingly for Recording rules", () => {
+      const rule: RulerRecordingRuleDTO = {
+        record: 'instance:node_num_cpu:sum',
+        expr: 'count without (cpu) (count without (mode) (node_cpu_seconds_total{job="integrations/node_exporter"}))',
+        labels: { type: 'cpu' },
+      };
+
+      const originalRule: RuleWithLocation<RulerRecordingRuleDTO> = {
+        ruleSourceName: 'my-prom-ds',
+        namespace: 'namespace-one',
+        group: mockRulerRuleGroup(),
+        rule,
+      };
+
+      const clonedRule: RuleWithLocation<RulerRuleDTO> = cloneRuleDefinition(originalRule);
+
+      const recordingRule: RulerRecordingRuleDTO = clonedRule.rule as RulerRecordingRuleDTO;
+
+      expect(originalRule.rule.record).toEqual('instance:node_num_cpu:sum');
+      expect(recordingRule.record).toEqual('instance:node_num_cpu:sum (copy)');
+    });
+
+    it('Should remove the group for provisioned Grafana rules', () => {
+      const rule: RulerGrafanaRuleDTO = mockRulerGrafanaRule(
+        {
+          for: '1m',
+          labels: { severity: 'critical', region: 'nasa' },
+          annotations: { [Annotation.summary]: 'This is a very important alert rule' },
+        },
+        { uid: 'grafana-rule-1', title: 'First Grafana Rule', data: [], provenance: 'foo' }
+      );
+
+      const originalRule: RuleWithLocation<RulerGrafanaRuleDTO> = {
+        ruleSourceName: 'my-prom-ds',
+        namespace: 'namespace-one',
+        group: mockRulerRuleGroup(),
+        rule,
+      };
+
+      const clonedRule: RuleWithLocation<RulerRuleDTO> = cloneRuleDefinition(originalRule);
+
+      expect(originalRule.group.name).toEqual('group1');
+      expect(clonedRule.group.name).toEqual('');
+    });
+
+    it('The cloned rule should not contain a UID property', () => {
+      const rule: RulerGrafanaRuleDTO = mockRulerGrafanaRule(
+        {
+          for: '1m',
+          labels: { severity: 'critical', region: 'nasa' },
+          annotations: { [Annotation.summary]: 'This is a very important alert rule' },
+        },
+        { uid: 'grafana-rule-1', title: 'First Grafana Rule', data: [] }
+      );
+
+      const originalRule: RuleWithLocation<RulerGrafanaRuleDTO> = {
+        ruleSourceName: 'my-prom-ds',
+        namespace: 'namespace-one',
+        group: mockRulerRuleGroup(),
+        rule,
+      };
+
+      const clonedRule: RuleWithLocation<RulerRuleDTO> = cloneRuleDefinition(originalRule);
+
+      const grafanaRule: RulerGrafanaRuleDTO = clonedRule.rule as RulerGrafanaRuleDTO;
+
+      expect(originalRule.rule.grafana_alert.uid).toEqual('grafana-rule-1');
+      expect(grafanaRule.grafana_alert.uid).toEqual('');
     });
   });
 });

@@ -1,14 +1,14 @@
 import { intersection } from 'lodash';
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 
 import { EditorFieldGroup, EditorRow, EditorRows } from '@grafana/experimental';
 
 import Datasource from '../../datasource';
 import { selectors } from '../../e2e/selectors';
 import { AzureMonitorErrorish, AzureMonitorOption, AzureMonitorQuery } from '../../types';
-import SubscriptionField from '../SubscriptionField';
 
 import QueryField from './QueryField';
+import SubscriptionField from './SubscriptionField';
 
 interface ArgQueryEditorProps {
   query: AzureMonitorQuery;
@@ -57,8 +57,11 @@ const ArgQueryEditor = ({
     datasource
       .getSubscriptions()
       .then((results) => {
+        const selectAllSubscriptionOption = [
+          { label: 'Select all subscriptions', value: 'Select all subscriptions', description: 'Select all' },
+        ];
         const fetchedSubscriptions = results.map((v) => ({ label: v.text, value: v.value, description: v.value }));
-        setSubscriptions(fetchedSubscriptions);
+        setSubscriptions(selectAllSubscriptionOption.concat(fetchedSubscriptions));
         setError(ERROR_SOURCE, undefined);
 
         onChange({
@@ -81,7 +84,6 @@ const ArgQueryEditor = ({
         <EditorRow>
           <EditorFieldGroup>
             <SubscriptionField
-              multiSelect
               subscriptions={subscriptions}
               query={query}
               datasource={datasource}

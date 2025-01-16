@@ -8,15 +8,15 @@ aliases:
   - ../enterprise/license/license-expiration/
   - ../enterprise/license/license-restrictions/
   - license-restrictions/
-cascade:
-  labels:
-    products:
-      - enterprise
 description: Activate and manage a Grafana Enterprise license
 keywords:
   - grafana
   - licensing
   - enterprise
+labels:
+  products:
+    - enterprise
+    - oss
 title: Grafana Enterprise license
 weight: 500
 ---
@@ -45,6 +45,16 @@ To download your Grafana Enterprise license:
 
 ### Step 2. Add your license to a Grafana instance
 
+You must install a Grafana Enterprise build to use the enterprise features, which you can [download](https://grafana.com/grafana/download?edition=enterprise).
+
+{{% admonition type="note" %}}
+
+If you already use Grafana OSS, you can replace it with the same version of Grafana Enterprise.
+Ensure that you back up the configuration and database before proceeding.
+For more information, refer to [Back up Grafana](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/administration/back-up-grafana/).
+
+{{% /admonition %}}
+
 There is more than one way to add the license to a Grafana instance:
 
 #### Upload the license file via the Grafana server administrator page
@@ -52,8 +62,8 @@ There is more than one way to add the license to a Grafana instance:
 This is the preferred option for single instance installations of Grafana Enterprise.
 
 1. Sign in as a Grafana server administrator.
-1. Navigate to **Server Admin > Upgrade** within Grafana.
-1. Click **Upload license token file**.
+1. Click **Administration > General > Stats and license** in the side navigation menu.
+1. Click **Upload a new token**.
 1. Select your license file, and upload it.
 
 #### Put the `license.jwt` file into the data directory of Grafana
@@ -186,6 +196,13 @@ The active users limit is turned off immediately.
 
 Settings updates at runtime are not affected by an expired license.
 
+#### Email sharing
+
+External users can't access dashboards shared via email anymore.
+These dashboards are now private but you can make them public and accessible to everyone if you want to.
+
+Grafana keeps your sharing configurations and restores them after you update your license.
+
 ## Grafana Enterprise license restrictions
 
 When you become a Grafana Enterprise customer, you receive a license that governs your use of Grafana Enterprise.
@@ -205,7 +222,9 @@ To determine the number of active users:
 
 1. Sign in to Grafana Enterprise as a System Administrator.
 
-1. Click **Administration** in the left-side menu.
+1. Click **Administration** in the side navigation menu.
+
+1. Click **General**.
 
 1. Click **Stats and license**.
 
@@ -215,7 +234,7 @@ To determine the number of active users:
 
 A tiered license defines dashboard viewers, and dashboard editors and administrators, as two distinct user types that each have their own user limit.
 
-As of Grafana Enterprise version 9.0, Grafana only counts and enforces the _total_ number of active users in your Grafana instance. For example, if you purchase 150 active users, you can have 20 admins, 70 editors, and 60 viewers, or you can have 150 admins. Grafana will enforce the total number of active users even if you use a license that grants a specific number of admins or editors and a certain number of viewers. This is a more permissive policy than before, which gives you the flexibility to change users' roles.
+Grafana only counts and enforces the _total_ number of active users in your Grafana instance. For example, if you purchase 150 active users, you can have 20 admins, 70 editors, and 60 viewers, or you can have 150 admins. Grafana will enforce the total number of active users even if you use a license that grants a specific number of admins or editors and a certain number of viewers. This is a more permissive policy than before, which gives you the flexibility to change users' roles.
 
 If you are running a pre-9.0 version of Grafana Enterprise, please refer to the documentation for that version to learn more about license enforcement in your current version.
 

@@ -1,5 +1,8 @@
 /** @beta */
 export interface ThemeShape {
+  /**
+   * @deprecated Use `theme.shape.radius.default`, `theme.shape.radius.pill` or `theme.shape.radius.circle` instead
+   */
   borderRadius: (amount?: number) => string;
   radius: Radii;
 }
@@ -19,7 +22,7 @@ export function createShape(options: ThemeShapeInput): ThemeShape {
   const baseBorderRadius = options.borderRadius ?? 2;
 
   const radius = {
-    default: '2px',
+    default: `${baseBorderRadius}px`,
     pill: '9999px',
     circle: '100%',
   };

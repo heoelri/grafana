@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 
@@ -43,15 +44,22 @@ var subtypeToPrefix = map[string]string{
 	Mimir:      mimirPrefix,
 }
 
+// The requester is primarily used for testing purposes, allowing us to inject a different implementation of withReq.
+type requester interface {
+	withReq(ctx *contextmodel.ReqContext, method string, u *url.URL, body io.Reader, extractor func(*response.NormalResponse) (any, error), headers map[string]string) response.Response
+}
+
 type LotexRuler struct {
 	log log.Logger
 	*AlertingProxy
+	requester requester
 }
 
 func NewLotexRuler(proxy *AlertingProxy, log log.Logger) *LotexRuler {
 	return &LotexRuler{
 		log:           log,
 		AlertingProxy: proxy,
+		requester:     proxy,
 	}
 }
 
@@ -60,12 +68,18 @@ func (r *LotexRuler) RouteDeleteNamespaceRulesConfig(ctx *contextmodel.ReqContex
 	if err != nil {
 		return ErrResp(500, err, "")
 	}
-	return r.withReq(
+
+	finalNamespace, err := getRulesNamespaceParam(ctx, namespace)
+	if err != nil {
+		return ErrResp(http.StatusBadRequest, err, "")
+	}
+
+	return r.requester.withReq(
 		ctx,
 		http.MethodDelete,
 		withPath(
 			*ctx.Req.URL,
-			fmt.Sprintf("%s/%s", legacyRulerPrefix, namespace),
+			fmt.Sprintf("%s/%s", legacyRulerPrefix, url.PathEscape(finalNamespace)),
 		),
 		nil,
 		messageExtractor,
@@ -78,7 +92,18 @@ func (r *LotexRuler) RouteDeleteRuleGroupConfig(ctx *contextmodel.ReqContext, na
 	if err != nil {
 		return ErrResp(500, err, "")
 	}
-	return r.withReq(
+
+	finalNamespace, err := getRulesNamespaceParam(ctx, namespace)
+	if err != nil {
+		return ErrResp(http.StatusBadRequest, err, "")
+	}
+
+	finalGroup, err := getRulesGroupParam(ctx, group)
+	if err != nil {
+		return ErrResp(http.StatusBadRequest, err, "")
+	}
+
+	return r.requester.withReq(
 		ctx,
 		http.MethodDelete,
 		withPath(
@@ -86,8 +111,8 @@ func (r *LotexRuler) RouteDeleteRuleGroupConfig(ctx *contextmodel.ReqContext, na
 			fmt.Sprintf(
 				"%s/%s/%s",
 				legacyRulerPrefix,
-				namespace,
-				group,
+				url.PathEscape(finalNamespace),
+				url.PathEscape(finalGroup),
 			),
 		),
 		nil,
@@ -101,7 +126,13 @@ func (r *LotexRuler) RouteGetNamespaceRulesConfig(ctx *contextmodel.ReqContext, 
 	if err != nil {
 		return ErrResp(500, err, "")
 	}
-	return r.withReq(
+
+	finalNamespace, err := getRulesNamespaceParam(ctx, namespace)
+	if err != nil {
+		return ErrResp(http.StatusBadRequest, err, "")
+	}
+
+	return r.requester.withReq(
 		ctx,
 		http.MethodGet,
 		withPath(
@@ -109,7 +140,7 @@ func (r *LotexRuler) RouteGetNamespaceRulesConfig(ctx *contextmodel.ReqContext, 
 			fmt.Sprintf(
 				"%s/%s",
 				legacyRulerPrefix,
-				namespace,
+				url.PathEscape(finalNamespace),
 			),
 		),
 		nil,
@@ -123,7 +154,18 @@ func (r *LotexRuler) RouteGetRulegGroupConfig(ctx *contextmodel.ReqContext, name
 	if err != nil {
 		return ErrResp(500, err, "")
 	}
-	return r.withReq(
+
+	finalNamespace, err := getRulesNamespaceParam(ctx, namespace)
+	if err != nil {
+		return ErrResp(http.StatusBadRequest, err, "")
+	}
+
+	finalGroup, err := getRulesGroupParam(ctx, group)
+	if err != nil {
+		return ErrResp(http.StatusBadRequest, err, "")
+	}
+
+	return r.requester.withReq(
 		ctx,
 		http.MethodGet,
 		withPath(
@@ -131,8 +173,8 @@ func (r *LotexRuler) RouteGetRulegGroupConfig(ctx *contextmodel.ReqContext, name
 			fmt.Sprintf(
 				"%s/%s/%s",
 				legacyRulerPrefix,
-				namespace,
-				group,
+				url.PathEscape(finalNamespace),
+				url.PathEscape(finalGroup),
 			),
 		),
 		nil,
@@ -147,7 +189,7 @@ func (r *LotexRuler) RouteGetRulesConfig(ctx *contextmodel.ReqContext) response.
 		return ErrResp(500, err, "")
 	}
 
-	return r.withReq(
+	return r.requester.withReq(
 		ctx,
 		http.MethodGet,
 		withPath(
@@ -169,8 +211,14 @@ func (r *LotexRuler) RoutePostNameRulesConfig(ctx *contextmodel.ReqContext, conf
 	if err != nil {
 		return ErrResp(500, err, "Failed marshal rule group")
 	}
-	u := withPath(*ctx.Req.URL, fmt.Sprintf("%s/%s", legacyRulerPrefix, ns))
-	return r.withReq(ctx, http.MethodPost, u, bytes.NewBuffer(yml), jsonExtractor(nil), nil)
+
+	finalNamespace, err := getRulesNamespaceParam(ctx, ns)
+	if err != nil {
+		return ErrResp(http.StatusBadRequest, err, "")
+	}
+
+	u := withPath(*ctx.Req.URL, fmt.Sprintf("%s/%s", legacyRulerPrefix, url.PathEscape(finalNamespace)))
+	return r.requester.withReq(ctx, http.MethodPost, u, bytes.NewBuffer(yml), jsonExtractor(nil), nil)
 }
 
 func (r *LotexRuler) validateAndGetPrefix(ctx *contextmodel.ReqContext) (string, error) {
@@ -179,7 +227,7 @@ func (r *LotexRuler) validateAndGetPrefix(ctx *contextmodel.ReqContext) (string,
 		return "", fmt.Errorf("datasource UID is invalid")
 	}
 
-	ds, err := r.DataProxy.DataSourceCache.GetDatasourceByUID(ctx.Req.Context(), datasourceUID, ctx.SignedInUser, ctx.SkipCache)
+	ds, err := r.DataProxy.DataSourceCache.GetDatasourceByUID(ctx.Req.Context(), datasourceUID, ctx.SignedInUser, ctx.SkipDSCache)
 	if err != nil {
 		return "", err
 	}
@@ -216,7 +264,8 @@ func (r *LotexRuler) validateAndGetPrefix(ctx *contextmodel.ReqContext) (string,
 }
 
 func withPath(u url.URL, newPath string) *url.URL {
-	// TODO: handle path escaping
-	u.Path = newPath
+	u.Path, _ = url.PathUnescape(newPath)
+	u.RawPath = newPath
+
 	return &u
 }

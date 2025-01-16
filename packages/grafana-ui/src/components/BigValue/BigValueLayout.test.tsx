@@ -1,7 +1,17 @@
-import { ArrayVector, createTheme, FieldType } from '@grafana/data';
+import { CSSProperties } from 'react';
+
+import { createTheme, FieldType } from '@grafana/data';
+import { config } from '@grafana/runtime';
+import { PercentChangeColorMode } from '@grafana/schema';
 
 import { Props, BigValueColorMode, BigValueGraphMode, BigValueTextMode } from './BigValue';
-import { buildLayout, StackedWithChartLayout, StackedWithNoChartLayout, WideWithChartLayout } from './BigValueLayout';
+import {
+  buildLayout,
+  getPercentChangeColor,
+  StackedWithChartLayout,
+  StackedWithNoChartLayout,
+  WideWithChartLayout,
+} from './BigValueLayout';
 
 function getProps(propOverrides?: Partial<Props>): Props {
   const props: Props = {
@@ -16,7 +26,7 @@ function getProps(propOverrides?: Partial<Props>): Props {
     sparkline: {
       y: {
         name: '',
-        values: new ArrayVector([1, 2, 3, 4, 3]),
+        values: [1, 2, 3, 4, 3],
         type: FieldType.number,
         config: {},
       },
@@ -28,6 +38,10 @@ function getProps(propOverrides?: Partial<Props>): Props {
   Object.assign(props, propOverrides);
   return props;
 }
+
+const valueStyles: CSSProperties = {
+  color: 'purple',
+};
 
 describe('BigValueLayout', () => {
   describe('buildLayout', () => {
@@ -68,7 +82,7 @@ describe('BigValueLayout', () => {
           sparkline: {
             y: {
               name: '',
-              values: new ArrayVector([1]),
+              values: [1],
               type: FieldType.number,
               config: {},
             },
@@ -86,6 +100,72 @@ describe('BigValueLayout', () => {
         })
       );
       expect(layout).toBeInstanceOf(WideWithChartLayout);
+    });
+  });
+
+  describe('percentChangeColor', () => {
+    const themeVisualizationColors = config.theme2.visualization;
+    const red = themeVisualizationColors.getColorByName('red');
+    const green = themeVisualizationColors.getColorByName('green');
+    it('standard negative should be red', () => {
+      const percentChange = -10;
+      const color = getPercentChangeColor(
+        percentChange,
+        PercentChangeColorMode.Standard,
+        valueStyles,
+        themeVisualizationColors
+      );
+      expect(color).toBe(red);
+    });
+    it('standard positive should be green', () => {
+      const percentChange = 10;
+      const color = getPercentChangeColor(
+        percentChange,
+        PercentChangeColorMode.Standard,
+        valueStyles,
+        themeVisualizationColors
+      );
+      expect(color).toBe(green);
+    });
+    it('inverted negative should be green', () => {
+      const percentChange = -10;
+      const color = getPercentChangeColor(
+        percentChange,
+        PercentChangeColorMode.Inverted,
+        valueStyles,
+        themeVisualizationColors
+      );
+      expect(color).toBe(green);
+    });
+    it('inverted positive should be red', () => {
+      const percentChange = 10;
+      const color = getPercentChangeColor(
+        percentChange,
+        PercentChangeColorMode.Inverted,
+        valueStyles,
+        themeVisualizationColors
+      );
+      expect(color).toBe(red);
+    });
+    it('same as value negative should be purple', () => {
+      const percentChange = -10;
+      const color = getPercentChangeColor(
+        percentChange,
+        PercentChangeColorMode.SameAsValue,
+        valueStyles,
+        themeVisualizationColors
+      );
+      expect(color).toBe('purple');
+    });
+    it('same as value positive should be purple', () => {
+      const percentChange = 10;
+      const color = getPercentChangeColor(
+        percentChange,
+        PercentChangeColorMode.SameAsValue,
+        valueStyles,
+        themeVisualizationColors
+      );
+      expect(color).toBe('purple');
     });
   });
 });

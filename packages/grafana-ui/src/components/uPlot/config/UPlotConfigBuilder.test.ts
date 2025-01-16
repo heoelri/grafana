@@ -8,7 +8,7 @@ import {
   VisibilityMode,
   ScaleOrientation,
   ScaleDirection,
-  GraphTresholdsStyleMode,
+  GraphThresholdsStyleMode,
   ScaleDistribution,
 } from '@grafana/schema';
 
@@ -379,8 +379,6 @@ describe('UPlotConfigBuilder', () => {
       max: 100,
     });
 
-    expect(builder.getConfig().scales!['scale-y']!.auto).toEqual(false);
-
     builder.addScale({
       isTime: false,
       scaleKey: 'scale-y2',
@@ -391,6 +389,7 @@ describe('UPlotConfigBuilder', () => {
       softMin: -50,
     });
 
+    expect(builder.getConfig().scales!['scale-y']!.auto).toEqual(false);
     expect(builder.getConfig().scales!['scale-y2']!.auto).toEqual(true);
   });
 
@@ -415,7 +414,7 @@ describe('UPlotConfigBuilder', () => {
         "axes": [
           {
             "filter": undefined,
-            "font": "12px "Inter", "Helvetica", "Arial", sans-serif",
+            "font": "12px 'Inter', 'Helvetica', 'Arial', sans-serif",
             "gap": 5,
             "grid": {
               "show": false,
@@ -424,7 +423,7 @@ describe('UPlotConfigBuilder', () => {
             },
             "incrs": undefined,
             "label": "test label",
-            "labelFont": "12px "Inter", "Helvetica", "Arial", sans-serif",
+            "labelFont": "12px 'Inter', 'Helvetica', 'Arial', sans-serif",
             "labelGap": 8,
             "labelSize": 20,
             "rotate": undefined,
@@ -812,7 +811,7 @@ describe('UPlotConfigBuilder', () => {
           steps: [],
         },
         config: {
-          mode: GraphTresholdsStyleMode.Area,
+          mode: GraphThresholdsStyleMode.Area,
         },
         theme: darkTheme,
       });
@@ -823,7 +822,7 @@ describe('UPlotConfigBuilder', () => {
           steps: [],
         },
         config: {
-          mode: GraphTresholdsStyleMode.Area,
+          mode: GraphThresholdsStyleMode.Area,
         },
         theme: darkTheme,
       });

@@ -9,7 +9,11 @@ keywords:
   - documentation
   - api
   - preferences
-title: 'HTTP Preferences API '
+labels:
+  products:
+    - enterprise
+    - oss
+title: 'Preferences API'
 ---
 
 # User and Org Preferences API
@@ -49,7 +53,7 @@ Content-Type: application/json
     "timezone": "utc",
     "weekStart": "",
     "navbar": {
-        "savedItems": null
+        "bookmarkUrls": null
     },
     "queryHistory": {
         "homeTab": ""
@@ -138,7 +142,7 @@ Content-Type: application/json
     "timezone": "",
     "weekStart": "",
     "navbar": {
-        "savedItems": null
+        "bookmarkUrls": null
     },
     "queryHistory": {
         "homeTab": ""

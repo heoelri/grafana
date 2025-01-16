@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/grafana/authlib/claims"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/grafana/grafana/pkg/services/authn"
@@ -29,23 +30,23 @@ func TestPassword_AuthenticatePassword(t *testing.T) {
 			username:         "test",
 			password:         "test",
 			req:              &authn.Request{},
-			clients:          []authn.PasswordClient{authntest.FakePasswordClient{ExpectedIdentity: &authn.Identity{ID: "user:1"}}},
-			expectedIdentity: &authn.Identity{ID: "user:1"},
+			clients:          []authn.PasswordClient{authntest.FakePasswordClient{ExpectedIdentity: &authn.Identity{ID: "1", Type: claims.TypeUser}}},
+			expectedIdentity: &authn.Identity{ID: "1", Type: claims.TypeUser},
 		},
 		{
 			desc:             "should success when found in second client",
 			username:         "test",
 			password:         "test",
 			req:              &authn.Request{},
-			clients:          []authn.PasswordClient{authntest.FakePasswordClient{ExpectedErr: errIdentityNotFound}, authntest.FakePasswordClient{ExpectedIdentity: &authn.Identity{ID: "user:2"}}},
-			expectedIdentity: &authn.Identity{ID: "user:2"},
+			clients:          []authn.PasswordClient{authntest.FakePasswordClient{ExpectedErr: errIdentityNotFound}, authntest.FakePasswordClient{ExpectedIdentity: &authn.Identity{ID: "2", Type: claims.TypeUser}}},
+			expectedIdentity: &authn.Identity{ID: "2", Type: claims.TypeUser},
 		},
 		{
 			desc:        "should fail for empty password",
 			username:    "test",
 			password:    "",
 			req:         &authn.Request{},
-			expectedErr: errEmptyPassword,
+			expectedErr: errPasswordAuthFailed,
 		},
 		{
 			desc:        "should if login is blocked by to many attempts",
@@ -53,7 +54,7 @@ func TestPassword_AuthenticatePassword(t *testing.T) {
 			password:    "test",
 			req:         &authn.Request{},
 			blockLogin:  true,
-			expectedErr: errLoginAttemptBlocked,
+			expectedErr: errPasswordAuthFailed,
 		},
 		{
 			desc:        "should fail when not found in any clients",

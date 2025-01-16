@@ -1,5 +1,4 @@
 import { render, screen } from '@testing-library/react';
-import React from 'react';
 
 import { AlertingSettings } from '@grafana/ui';
 
@@ -44,8 +43,8 @@ describe('Alerting Settings', () => {
     expect(screen.queryByText('Alertmanager data source')).toBeNull();
   });
 
-  it('should show the option to Manage alerts via Alerting UI', () => {
+  it('should show the option to manager alerts', () => {
     setup();
-    expect(screen.getByText('Manage alerts via Alerting UI')).toBeVisible();
+    expect(screen.getByText('Manage alert rules in Alerting UI')).toBeVisible();
   });
 });

@@ -1,10 +1,8 @@
 import { action } from '@storybook/addon-actions';
-import { Meta, Story } from '@storybook/react';
-import React from 'react';
+import { Meta, StoryFn } from '@storybook/react';
 
 import { ConfirmButton } from '@grafana/ui';
 
-import { withCenteredStory } from '../../utils/storybook/withCenteredStory';
 import { Button } from '../Button';
 
 import { Props } from './ConfirmButton';
@@ -14,7 +12,9 @@ import { DeleteButton } from './DeleteButton';
 const meta: Meta = {
   title: 'Buttons/ConfirmButton',
   component: ConfirmButton,
-  decorators: [withCenteredStory],
+  // SB7 has broken subcomponent types due to dropping support for the feature
+  // https://github.com/storybookjs/storybook/issues/20782
+  // @ts-ignore
   subcomponents: { DeleteButton },
   parameters: {
     docs: {
@@ -47,7 +47,7 @@ interface StoryProps extends Partial<Props> {
   buttonText: string;
 }
 
-export const Basic: Story<StoryProps> = (args) => {
+export const Basic: StoryFn<StoryProps> = (args) => {
   return (
     <ConfirmButton
       closeOnConfirm={args.closeOnConfirm}
@@ -64,7 +64,7 @@ export const Basic: Story<StoryProps> = (args) => {
   );
 };
 
-export const WithCustomButton: Story<StoryProps> = (args) => {
+export const WithCustomButton: StoryFn<StoryProps> = (args) => {
   return (
     <ConfirmButton
       closeOnConfirm={args.closeOnConfirm}
@@ -83,7 +83,7 @@ export const WithCustomButton: Story<StoryProps> = (args) => {
   );
 };
 
-export const Delete: Story<StoryProps> = (args) => {
+export const Delete: StoryFn<StoryProps> = (args) => {
   return (
     <DeleteButton
       size={args.size}

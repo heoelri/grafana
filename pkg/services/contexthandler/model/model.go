@@ -7,13 +7,13 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/grafana/grafana/pkg/apimachinery/errutil"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/tracing"
 	"github.com/grafana/grafana/pkg/models/usertoken"
 	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
-	"github.com/grafana/grafana/pkg/util/errutil"
 	"github.com/grafana/grafana/pkg/web"
 )
 
@@ -25,14 +25,21 @@ type ReqContext struct {
 	IsSignedIn     bool
 	IsRenderCall   bool
 	AllowAnonymous bool
-	SkipCache      bool
+	SkipDSCache    bool
+	SkipQueryCache bool
 	Logger         log.Logger
+	Error          error
 	// RequestNonce is a cryptographic request identifier for use with Content Security Policy.
-	RequestNonce          string
-	IsPublicDashboardView bool
+	RequestNonce               string
+	PublicDashboardAccessToken string
 
 	PerfmonTimer   prometheus.Summary
 	LookupTokenErr error
+
+	// FIXME: Remove this temporary flag after the rollout of FlagUseSessionStorageForRedirection feature flag
+	// Tracking issue for cleaning up this flag: https://github.com/grafana/identity-access-team/issues/908
+	// UseSessionStorageRedirect is introduced to simplify the rollout of the new redirect logic
+	UseSessionStorageRedirect bool
 }
 
 // Handle handles and logs error by given status.
@@ -41,14 +48,12 @@ func (ctx *ReqContext) Handle(cfg *setting.Cfg, status int, title string, err er
 		Title     string
 		AppTitle  string
 		AppSubUrl string
-		Theme     string
+		ThemeType string
 		ErrorMsg  error
 	}{title, "Grafana", cfg.AppSubURL, "dark", nil}
+
 	if err != nil {
 		ctx.Logger.Error(title, "error", err)
-		if setting.Env != setting.Prod {
-			data.ErrorMsg = err
-		}
 	}
 
 	ctx.HTML(status, cfg.ErrTemplateName, data)
@@ -56,6 +61,10 @@ func (ctx *ReqContext) Handle(cfg *setting.Cfg, status int, title string, err er
 
 func (ctx *ReqContext) IsApiRequest() bool {
 	return strings.HasPrefix(ctx.Req.URL.Path, "/api")
+}
+
+func (ctx *ReqContext) IsPublicDashboardView() bool {
+	return ctx.PublicDashboardAccessToken != ""
 }
 
 func (ctx *ReqContext) JsonApiErr(status int, message string, err error) {
@@ -68,10 +77,6 @@ func (ctx *ReqContext) JsonApiErr(status int, message string, err error) {
 			ctx.Logger.Error(message, "error", err, "traceID", traceID)
 		} else {
 			ctx.Logger.Warn(message, "error", err, "traceID", traceID)
-		}
-
-		if setting.Env != setting.Prod {
-			resp["error"] = err.Error()
 		}
 	}
 
@@ -138,7 +143,11 @@ func (ctx *ReqContext) writeErrOrFallback(status int, message string, err error)
 			}
 		}
 
-		logger(logMessage, "error", err, "remote_addr", ctx.RemoteAddr(), "traceID", traceID)
+		if errutil.HasUnifiedLogging(ctx.Req.Context()) {
+			ctx.Error = err
+		} else {
+			logger(logMessage, "error", err, "remote_addr", ctx.RemoteAddr(), "traceID", traceID)
+		}
 	}
 
 	if _, ok := data["message"]; !ok && message != "" {
@@ -149,7 +158,7 @@ func (ctx *ReqContext) writeErrOrFallback(status int, message string, err error)
 }
 
 func (ctx *ReqContext) HasUserRole(role org.RoleType) bool {
-	return ctx.OrgRole.Includes(role)
+	return ctx.SignedInUser.GetOrgRole().Includes(role)
 }
 
 func (ctx *ReqContext) HasHelpFlag(flag user.HelpFlags1) bool {

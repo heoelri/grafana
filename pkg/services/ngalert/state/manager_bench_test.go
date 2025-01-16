@@ -6,33 +6,47 @@ import (
 	"testing"
 	"time"
 
+	"github.com/benbjohnson/clock"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/stretchr/testify/mock"
+
+	"github.com/grafana/grafana/pkg/infra/log"
+	"github.com/grafana/grafana/pkg/infra/tracing"
 	"github.com/grafana/grafana/pkg/services/annotations"
+	"github.com/grafana/grafana/pkg/services/ngalert/accesscontrol/fakes"
 	"github.com/grafana/grafana/pkg/services/ngalert/eval"
 	"github.com/grafana/grafana/pkg/services/ngalert/metrics"
 	"github.com/grafana/grafana/pkg/services/ngalert/models"
 	"github.com/grafana/grafana/pkg/services/ngalert/state"
 	"github.com/grafana/grafana/pkg/services/ngalert/state/historian"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/stretchr/testify/mock"
 )
 
 func BenchmarkProcessEvalResults(b *testing.B) {
+	b.ReportAllocs()
 	as := annotations.FakeAnnotationsRepo{}
 	as.On("SaveMany", mock.Anything, mock.Anything).Return(nil)
-	metrics := metrics.NewHistorianMetrics(prometheus.NewRegistry())
-	hist := historian.NewAnnotationBackend(&as, nil, nil, metrics)
+	metrics := metrics.NewHistorianMetrics(prometheus.NewRegistry(), metrics.Subsystem)
+	store := historian.NewAnnotationStore(&as, nil, metrics)
+	annotationBackendLogger := log.New("ngalert.state.historian", "backend", "annotations")
+	ac := &fakes.FakeRuleService{}
+	hist := historian.NewAnnotationBackend(annotationBackendLogger, store, nil, metrics, ac)
 	cfg := state.ManagerCfg{
 		Historian: hist,
+		Tracer:    tracing.InitializeTracerForTest(),
+		Log:       log.New("ngalert.state.manager"),
+		Clock:     clock.New(),
 	}
-	sut := state.NewManager(cfg)
+	sut := state.NewManager(cfg, state.NewNoopPersister())
 	now := time.Now().UTC()
 	rule := makeBenchRule()
 	results := makeBenchResults(100)
 	labels := map[string]string{}
 
 	var ans []state.StateTransition
+	b.ResetTimer()
+
 	for i := 0; i < b.N; i++ {
-		ans = sut.ProcessEvalResults(context.Background(), now, &rule, results, labels)
+		ans = sut.ProcessEvalResults(context.Background(), now, &rule, results, labels, nil)
 	}
 
 	b.StopTimer()

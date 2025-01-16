@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/prometheus/common/model"
-	"github.com/prometheus/prometheus/pkg/timestamp"
+	"github.com/prometheus/prometheus/model/timestamp"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/template"
 
@@ -96,6 +96,10 @@ func (e ExpandError) Error() string {
 }
 
 func Expand(ctx context.Context, name, tmpl string, data Data, externalURL *url.URL, evaluatedAt time.Time) (string, error) {
+	if !strings.Contains(tmpl, "{{") { // If it is not a template, skip expanding it.
+		return tmpl, nil
+	}
+
 	// add __alert_ to avoid possible conflicts with other templates
 	name = "__alert_" + name
 	// add variables for the labels and values to the beginning of the template

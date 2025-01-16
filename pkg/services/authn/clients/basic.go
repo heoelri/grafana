@@ -3,13 +3,11 @@ package clients
 import (
 	"context"
 
+	"github.com/grafana/grafana/pkg/apimachinery/errutil"
 	"github.com/grafana/grafana/pkg/services/authn"
-	"github.com/grafana/grafana/pkg/util/errutil"
 )
 
-var (
-	errDecodingBasicAuthHeader = errutil.NewBase(errutil.StatusBadRequest, "basic-auth.invalid-header", errutil.WithPublicMessage("Invalid Basic Auth Header"))
-)
+var errDecodingBasicAuthHeader = errutil.BadRequest("basic-auth.invalid-header", errutil.WithPublicMessage("Invalid Basic Auth Header"))
 
 var _ authn.ContextAwareClient = new(Basic)
 
@@ -38,7 +36,14 @@ func (c *Basic) Authenticate(ctx context.Context, r *authn.Request) (*authn.Iden
 	return c.client.AuthenticatePassword(ctx, r, username, password)
 }
 
+func (c *Basic) IsEnabled() bool {
+	return true
+}
+
 func (c *Basic) Test(ctx context.Context, r *authn.Request) bool {
+	if r.HTTPRequest == nil {
+		return false
+	}
 	return looksLikeBasicAuthRequest(r)
 }
 

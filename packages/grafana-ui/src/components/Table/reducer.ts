@@ -2,25 +2,25 @@ import { useCallback } from 'react';
 
 import { getFieldDisplayName } from '@grafana/data';
 
-import { TableSortByFieldState, GrafanaTableColumn, GrafanaTableState, Props } from './types';
+import { TableSortByFieldState, GrafanaTableColumn, GrafanaTableState, TableStateReducerProps, Props } from './types';
 
 export interface ActionType {
   type: string;
   id: string | undefined;
 }
 
-export function useTableStateReducer({ onColumnResize, onSortByChange, data }: Props) {
+export function useTableStateReducer({ onColumnResize, onSortByChange, data }: TableStateReducerProps) {
   return useCallback(
     (newState: GrafanaTableState, action: ActionType) => {
       switch (action.type) {
         case 'columnDoneResizing':
           if (onColumnResize) {
-            const info = (newState.columnResizing.headerIdWidths as any)[0];
-            const columnIdString = info[0];
+            const info = (newState.columnResizing?.headerIdWidths as any)?.[0];
+            const columnIdString = info?.[0];
             const fieldIndex = parseInt(columnIdString, 10);
-            const width = Math.round(newState.columnResizing.columnWidths[columnIdString] as number);
+            const width = Math.round(newState.columnResizing.columnWidths?.[columnIdString]);
 
-            const field = data.fields[fieldIndex];
+            const field = data.fields?.[fieldIndex];
             if (!field) {
               return newState;
             }
@@ -50,8 +50,7 @@ export function useTableStateReducer({ onColumnResize, onSortByChange, data }: P
           if (action.id) {
             return {
               ...newState,
-              lastExpandedIndex: parseInt(action.id, 10),
-              toggleRowExpandedCounter: newState.toggleRowExpandedCounter + 1,
+              lastExpandedOrCollapsedIndex: parseInt(action.id, 10),
             };
           }
         }
@@ -65,13 +64,9 @@ export function useTableStateReducer({ onColumnResize, onSortByChange, data }: P
 
 export function getInitialState(
   initialSortBy: Props['initialSortBy'],
-  initialShowRowNumbers: Props['showRowNums'],
   columns: GrafanaTableColumn[]
 ): Partial<GrafanaTableState> {
-  const state: Partial<GrafanaTableState> = {
-    toggleRowExpandedCounter: 0,
-    hiddenColumns: initialShowRowNumbers ? [] : ['0'],
-  };
+  const state: Partial<GrafanaTableState> = {};
 
   if (initialSortBy) {
     state.sortBy = [];

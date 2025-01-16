@@ -16,7 +16,6 @@ import (
 	"github.com/grafana/grafana/pkg/services/auth"
 	"github.com/grafana/grafana/pkg/services/auth/authtest"
 	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
-	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/services/user/usertest"
@@ -171,10 +170,10 @@ func TestHTTPServer_RotateUserAuthToken(t *testing.T) {
 			expectedStatus:       http.StatusUnauthorized,
 		},
 		{
-			desc:           "Should return 404 and when token s not found",
+			desc:           "Should return 401 and when token not found",
 			cookie:         &http.Cookie{Name: "grafana_session", Value: "123", Path: "/"},
 			rotatedErr:     auth.ErrUserTokenNotFound,
-			expectedStatus: http.StatusNotFound,
+			expectedStatus: http.StatusUnauthorized,
 		},
 		{
 			desc:           "Should return 200 and but not set new cookie if token was not rotated",
@@ -200,7 +199,6 @@ func TestHTTPServer_RotateUserAuthToken(t *testing.T) {
 				hs.Cfg = cfg
 				hs.log = log.New()
 				hs.Cfg.LoginCookieName = "grafana_session"
-				hs.Features = featuremgmt.WithFeatures(featuremgmt.FlagClientTokenRotation)
 				hs.AuthTokenService = &authtest.FakeUserAuthTokenService{
 					RotateTokenProvider: func(ctx context.Context, cmd auth.RotateCommand) (*auth.UserToken, error) {
 						return tt.rotatedToken, tt.rotatedErr

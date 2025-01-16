@@ -15,7 +15,29 @@ export interface QueryHistoryPreference {
   homeTab?: string;
 }
 
+export interface CookiePreferences {
+  analytics?: Record<string, unknown>;
+  functional?: Record<string, unknown>;
+  performance?: Record<string, unknown>;
+}
+
+export interface NavbarPreference {
+  bookmarkUrls: Array<string>;
+}
+
+export const defaultNavbarPreference: Partial<NavbarPreference> = {
+  bookmarkUrls: [],
+};
+
+/**
+ * Spec defines user, team or org Grafana preferences
+ * swagger:model Preferences
+ */
 export interface Preferences {
+  /**
+   * Cookie preferences
+   */
+  cookiePreferences?: CookiePreferences;
   /**
    * UID for the home dashboard
    */
@@ -24,6 +46,10 @@ export interface Preferences {
    * Selected language (beta)
    */
   language?: string;
+  /**
+   * Navigation preferences
+   */
+  navbar?: NavbarPreference;
   /**
    * Explore query history preferences
    */

@@ -1,7 +1,7 @@
-import { toDataFrame } from '../../dataframe';
-import { DataTransformerConfig, FieldType, Field, SpecialValue } from '../../types';
+import { toDataFrame } from '../../dataframe/processDataFrame';
+import { FieldType, Field } from '../../types/dataFrame';
+import { DataTransformerConfig, SpecialValue } from '../../types/transformations';
 import { mockTransformationsRegistry } from '../../utils/tests/mockTransformationsRegistry';
-import { ArrayVector } from '../../vector';
 import { transformDataFrame } from '../transformDataFrame';
 
 import { GroupingToMatrixTransformerOptions, groupingToMatrixTransformer } from './groupingToMatrix';
@@ -32,25 +32,25 @@ describe('Grouping to Matrix', () => {
         {
           name: 'Time\\Time',
           type: FieldType.string,
-          values: new ArrayVector([1000, 1001, 1002]),
+          values: [1000, 1001, 1002],
           config: {},
         },
         {
           name: '1000',
           type: FieldType.number,
-          values: new ArrayVector([1, '', '']),
+          values: [1, '', ''],
           config: {},
         },
         {
           name: '1001',
           type: FieldType.number,
-          values: new ArrayVector(['', 2, '']),
+          values: ['', 2, ''],
           config: {},
         },
         {
           name: '1002',
           type: FieldType.number,
-          values: new ArrayVector(['', '', 3]),
+          values: ['', '', 3],
           config: {},
         },
       ];
@@ -84,19 +84,19 @@ describe('Grouping to Matrix', () => {
         {
           name: 'Row\\Column',
           type: FieldType.string,
-          values: new ArrayVector(['R1', 'R2']),
+          values: ['R1', 'R2'],
           config: {},
         },
         {
           name: 'C1',
           type: FieldType.number,
-          values: new ArrayVector([1, 4]),
+          values: [1, 4],
           config: {},
         },
         {
           name: 'C2',
           type: FieldType.number,
-          values: new ArrayVector([5, '']),
+          values: [5, ''],
           config: {},
         },
       ];
@@ -105,11 +105,18 @@ describe('Grouping to Matrix', () => {
     });
   });
 
-  it('generates Matrix with empty entries', async () => {
+  it.each([
+    [undefined, ''],
+    [SpecialValue.Null, null],
+    [SpecialValue.False, false],
+    [SpecialValue.True, true],
+    [SpecialValue.Empty, ''],
+    [SpecialValue.Zero, 0],
+  ])('generates Matrix with empty entries', async (emptyValue, expectedValue) => {
     const cfg: DataTransformerConfig<GroupingToMatrixTransformerOptions> = {
       id: DataTransformerID.groupingToMatrix,
       options: {
-        emptyValue: SpecialValue.Null,
+        emptyValue: emptyValue,
       },
     };
 
@@ -127,19 +134,19 @@ describe('Grouping to Matrix', () => {
         {
           name: 'Time\\Time',
           type: FieldType.string,
-          values: new ArrayVector([1000, 1001]),
+          values: [1000, 1001],
           config: {},
         },
         {
           name: '1000',
           type: FieldType.number,
-          values: new ArrayVector([1, null]),
+          values: [1, expectedValue],
           config: {},
         },
         {
           name: '1001',
           type: FieldType.number,
-          values: new ArrayVector([null, 2]),
+          values: [expectedValue, 2],
           config: {},
         },
       ];
