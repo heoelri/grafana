@@ -1,12 +1,15 @@
 package elasticsearch
 
 import (
+	"fmt"
+
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
 
 	"github.com/grafana/grafana/pkg/components/simplejson"
 )
 
-func parseQuery(tsdbQuery []backend.DataQuery) ([]*Query, error) {
+func parseQuery(tsdbQuery []backend.DataQuery, logger log.Logger) ([]*Query, error) {
 	queries := make([]*Query, 0)
 	for _, q := range tsdbQuery {
 		model, err := simplejson.NewJson(q.JSON)
@@ -20,10 +23,12 @@ func parseQuery(tsdbQuery []backend.DataQuery) ([]*Query, error) {
 		rawQuery := model.Get("query").MustString()
 		bucketAggs, err := parseBucketAggs(model)
 		if err != nil {
-			return nil, err
+			logger.Error("Failed to parse bucket aggs in query", "error", err, "model", string(q.JSON))
+			return nil, backend.DownstreamError(err)
 		}
 		metrics, err := parseMetrics(model)
 		if err != nil {
+			logger.Error("Failed to parse metrics in query", "error", err, "model", string(q.JSON))
 			return nil, err
 		}
 		alias := model.Get("alias").MustString("")
@@ -39,6 +44,7 @@ func parseQuery(tsdbQuery []backend.DataQuery) ([]*Query, error) {
 			IntervalMs:    intervalMs,
 			RefID:         q.RefID,
 			MaxDataPoints: q.MaxDataPoints,
+			TimeRange:     q.TimeRange,
 		})
 	}
 
@@ -55,12 +61,12 @@ func parseBucketAggs(model *simplejson.Json) ([]*BucketAgg, error) {
 
 		agg.Type, err = aggJSON.Get("type").String()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to parse bucket aggs type: %w", err)
 		}
 
 		agg.ID, err = aggJSON.Get("id").String()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to parse bucket aggs id: %w", err)
 		}
 
 		agg.Field = aggJSON.Get("field").MustString()
@@ -103,7 +109,7 @@ func parseMetrics(model *simplejson.Json) ([]*MetricAgg, error) {
 			metric.PipelineVariables = map[string]string{}
 			pvArr := metricJSON.Get("pipelineVariables").MustArray()
 			for _, v := range pvArr {
-				kv := v.(map[string]interface{})
+				kv := v.(map[string]any)
 				metric.PipelineVariables[kv["name"].(string)] = kv["pipelineAgg"].(string)
 			}
 		}

@@ -8,12 +8,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/grafana/grafana/pkg/util/errutil"
+	"github.com/grafana/grafana/pkg/apimachinery/errutil"
 )
 
 var ErrPrefNotFound = errors.New("preference not found")
-var ErrUnknownCookieType = errutil.NewBase(
-	errutil.StatusBadRequest,
+var ErrUnknownCookieType = errutil.BadRequest(
 	"preferences.unknownCookieType",
 	errutil.WithPublicMessage("Got an unknown cookie preference type. Expected a set containing one or more of 'functional', 'performance', or 'analytics'}"),
 )
@@ -68,6 +67,7 @@ type SavePreferenceCommand struct {
 	Language          string                  `json:"language,omitempty"`
 	QueryHistory      *QueryHistoryPreference `json:"queryHistory,omitempty"`
 	CookiePreferences []CookieType            `json:"cookiePreferences,omitempty"`
+	Navbar            *NavbarPreference       `json:"navbar,omitempty"`
 }
 
 type PatchPreferenceCommand struct {
@@ -83,16 +83,22 @@ type PatchPreferenceCommand struct {
 	Language          *string                 `json:"language,omitempty"`
 	QueryHistory      *QueryHistoryPreference `json:"queryHistory,omitempty"`
 	CookiePreferences []CookieType            `json:"cookiePreferences,omitempty"`
+	Navbar            *NavbarPreference       `json:"navbar,omitempty"`
 }
 
 type PreferenceJSONData struct {
 	Language          string                 `json:"language"`
 	QueryHistory      QueryHistoryPreference `json:"queryHistory"`
 	CookiePreferences map[string]struct{}    `json:"cookiePreferences"`
+	Navbar            NavbarPreference       `json:"navbar"`
 }
 
 type QueryHistoryPreference struct {
 	HomeTab string `json:"homeTab"`
+}
+
+type NavbarPreference struct {
+	BookmarkUrls []string `json:"bookmarkUrls"`
 }
 
 func (j *PreferenceJSONData) FromDB(data []byte) error {
@@ -101,7 +107,7 @@ func (j *PreferenceJSONData) FromDB(data []byte) error {
 	return dec.Decode(j)
 }
 
-func (j *PreferenceJSONData) Scan(val interface{}) error {
+func (j *PreferenceJSONData) Scan(val any) error {
 	switch v := val.(type) {
 	case []byte:
 		if len(v) == 0 {

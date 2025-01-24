@@ -1,5 +1,5 @@
 import classNames from 'classnames';
-import React, { ReactNode } from 'react';
+import { ReactNode } from 'react';
 
 import { Icon } from '../Icon/Icon';
 import { Tooltip, PopoverContent } from '../Tooltip';
@@ -37,7 +37,7 @@ export const FormLabel = ({
       {children}
       {tooltip && (
         <Tooltip placement="top" content={tooltip} theme={'info'} interactive={interactive}>
-          <Icon tabIndex={0} name="info-circle" size="sm" style={{ marginLeft: '10px' }} />
+          <Icon name="info-circle" size="sm" style={{ marginLeft: '10px' }} />
         </Tooltip>
       )}
     </label>

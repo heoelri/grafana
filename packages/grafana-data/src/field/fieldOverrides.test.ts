@@ -1,23 +1,18 @@
-import { ArrayDataFrame, MutableDataFrame, toDataFrame } from '../dataframe';
-import { rangeUtil } from '../datetime';
-import { createTheme } from '../themes';
-import { FieldMatcherID } from '../transformations';
-import {
-  DataFrame,
-  Field,
-  FieldColorModeId,
-  FieldConfig,
-  FieldConfigPropertyItem,
-  FieldConfigSource,
-  FieldType,
-  GrafanaConfig,
-  InterpolateFunction,
-  ScopedVars,
-  ThresholdsMode,
-} from '../types';
-import { locationUtil, Registry } from '../utils';
+import { ArrayDataFrame } from '../dataframe/ArrayDataFrame';
+import { createDataFrame, toDataFrame } from '../dataframe/processDataFrame';
+import { relativeToTimeRange } from '../datetime/rangeutil';
+import { createTheme } from '../themes/createTheme';
+import { FieldMatcherID } from '../transformations/matchers/ids';
+import { ScopedVars } from '../types/ScopedVars';
+import { GrafanaConfig } from '../types/config';
+import { FieldType, DataFrame, Field, FieldConfig } from '../types/dataFrame';
+import { FieldColorModeId } from '../types/fieldColor';
+import { FieldConfigPropertyItem, FieldConfigSource } from '../types/fieldOverrides';
+import { InterpolateFunction } from '../types/panel';
+import { ThresholdsMode } from '../types/thresholds';
+import { Registry } from '../utils/Registry';
+import { locationUtil } from '../utils/location';
 import { mockStandardProperties } from '../utils/tests/mockStandardProperties';
-import { ArrayVector } from '../vector';
 
 import { FieldConfigOptionsRegistry } from './FieldConfigOptionsRegistry';
 import { getDisplayProcessor } from './displayProcessor';
@@ -125,7 +120,7 @@ describe('Global MinMax', () => {
     });
   });
 
-  describe('when value values are zeo', () => {
+  describe('when values are zero', () => {
     it('then global min max should be correct', () => {
       const frame = toDataFrame({
         fields: [
@@ -178,11 +173,11 @@ describe('applyFieldOverrides', () => {
   };
 
   describe('given multiple data frames', () => {
-    const f0 = new MutableDataFrame({
+    const f0 = createDataFrame({
       name: 'A',
       fields: [{ name: 'message', type: FieldType.string, values: [10, 20] }],
     });
-    const f1 = new MutableDataFrame({
+    const f1 = createDataFrame({
       name: 'B',
       fields: [{ name: 'info', type: FieldType.string, values: [10, 20] }],
     });
@@ -199,35 +194,54 @@ describe('applyFieldOverrides', () => {
         fieldConfigRegistry: new FieldConfigOptionsRegistry(),
       });
 
-      expect(withOverrides[0].fields[0].state!.scopedVars).toMatchInlineSnapshot(`
-        {
-          "__field": {
-            "text": "Field",
-            "value": {},
-          },
-          "__series": {
-            "text": "Series",
-            "value": {
-              "name": "A",
-            },
-          },
-        }
-      `);
+      expect(withOverrides[0].fields[0].state!.scopedVars?.__dataContext?.value.frame).toBe(withOverrides[0]);
+      expect(withOverrides[0].fields[0].state!.scopedVars?.__dataContext?.value.frameIndex).toBe(0);
+      expect(withOverrides[0].fields[0].state!.scopedVars?.__dataContext?.value.field).toBe(withOverrides[0].fields[0]);
+    });
+  });
 
-      expect(withOverrides[1].fields[0].state!.scopedVars).toMatchInlineSnapshot(`
+  describe('given nested data frames', () => {
+    const f0Nested = createDataFrame({
+      name: 'nested',
+      fields: [{ name: 'info', type: FieldType.string, values: [10, 20] }],
+    });
+    const f0 = createDataFrame({
+      name: 'A',
+      fields: [
         {
-          "__field": {
-            "text": "Field",
-            "value": {},
-          },
-          "__series": {
-            "text": "Series",
-            "value": {
-              "name": "B",
-            },
-          },
-        }
-      `);
+          name: 'message',
+          type: FieldType.string,
+          values: [10, 20],
+        },
+        {
+          name: 'nested',
+          type: FieldType.nestedFrames,
+          values: [[f0Nested]],
+        },
+      ],
+    });
+
+    it('should add scopedVars to fields', () => {
+      const withOverrides = applyFieldOverrides({
+        data: [f0],
+        fieldConfig: {
+          defaults: {},
+          overrides: [],
+        },
+        replaceVariables: (value) => value,
+        theme: createTheme(),
+        fieldConfigRegistry: new FieldConfigOptionsRegistry(),
+      });
+
+      expect(withOverrides[0].fields[1].values[0][0].fields[0].state!.scopedVars?.__dataContext?.value.frame).toBe(
+        withOverrides[0].fields[1].values[0][0]
+      );
+      expect(withOverrides[0].fields[1].values[0][0].fields[0].state!.scopedVars?.__dataContext?.value.frameIndex).toBe(
+        0
+      );
+      expect(withOverrides[0].fields[1].values[0][0].fields[0].state!.scopedVars?.__dataContext?.value.field).toBe(
+        withOverrides[0].fields[1].values[0][0].fields[0]
+      );
     });
   });
 
@@ -295,6 +309,63 @@ describe('applyFieldOverrides', () => {
     expect(config.decimals).toEqual(1);
   });
 
+  it('displayName should be able to reference itself', () => {
+    const data = applyFieldOverrides({
+      data: [f0], // the frame
+      fieldConfig: {
+        defaults: {
+          displayName: '${__field.displayName} and more!',
+        },
+        overrides: [],
+      },
+      replaceVariables: (v, scopedVars) => {
+        const dataContext = scopedVars?.__dataContext?.value;
+        if (dataContext) {
+          // Trying to fake what would happen with the real interpolation function
+          return getFieldDisplayName(dataContext.field, dataContext.frame) + ' and more!';
+        }
+        return v;
+      },
+      theme: createTheme(),
+      fieldConfigRegistry: customFieldRegistry,
+    })[0];
+
+    const valueColumn = data.fields[1];
+    const displayName = getFieldDisplayName(valueColumn, data);
+
+    expect(displayName).toEqual('value and more!');
+  });
+
+  it('displayName should be able to reference itself in an override', () => {
+    const data = applyFieldOverrides({
+      data: [f0], // the frame
+      fieldConfig: {
+        defaults: {},
+        overrides: [
+          {
+            matcher: { id: FieldMatcherID.byName, options: 'value' },
+            properties: [{ id: 'displayName', value: '${__field.displayName} and more!' }],
+          },
+        ],
+      },
+      replaceVariables: (v, scopedVars) => {
+        const dataContext = scopedVars?.__dataContext?.value;
+        if (dataContext) {
+          // Trying to fake what would happen with the real interpolation function
+          return getFieldDisplayName(dataContext.field, dataContext.frame) + ' and more!';
+        }
+        return v;
+      },
+      theme: createTheme(),
+      fieldConfigRegistry: customFieldRegistry,
+    })[0];
+
+    const valueColumn = data.fields[1];
+    const displayName = getFieldDisplayName(valueColumn, data);
+
+    expect(displayName).toEqual('value and more!');
+  });
+
   it('will apply set min/max when asked', () => {
     const data = applyFieldOverrides({
       data: [f0], // the frame
@@ -310,6 +381,106 @@ describe('applyFieldOverrides', () => {
 
     // Don't Automatically pick the min value
     expect(range.min).toEqual(-20);
+  });
+
+  it('should calculate min/max per field when fieldMinMax is set', () => {
+    const df = toDataFrame([
+      { title: 'AAA', value: 100, value2: 1234 },
+      { title: 'BBB', value: -20, value2: null },
+      { title: 'CCC', value: 200, value2: 1000 },
+    ]);
+
+    const fieldCfgSource: FieldConfigSource = {
+      defaults: {
+        fieldMinMax: true,
+      },
+      overrides: [],
+    };
+    const data = applyFieldOverrides({
+      data: [df], // the frame
+      fieldConfig: fieldCfgSource,
+      replaceVariables: undefined as unknown as InterpolateFunction,
+      theme: createTheme(),
+      fieldConfigRegistry: customFieldRegistry,
+    })[0];
+
+    const valueColumn1 = data.fields[1];
+    const range1 = valueColumn1.state!.range!;
+    expect(range1.max).toEqual(200);
+    expect(range1.min).toEqual(-20);
+
+    const valueColumn2 = data.fields[2];
+    const range2 = valueColumn2.state!.range!;
+    expect(range2.max).toEqual(1234);
+    expect(range2.min).toEqual(1000);
+  });
+
+  it('should calculate min/max locally for fields with fieldMinMax and globally for other fields', () => {
+    const df = toDataFrame({
+      fields: [
+        { name: 'first', type: FieldType.number, values: [-1, -2] },
+        { name: 'second', type: FieldType.number, values: [1, 2] },
+        { name: 'third', type: FieldType.number, values: [1000, 2000] },
+      ],
+    });
+
+    const fieldCfgSource: FieldConfigSource = {
+      defaults: {},
+      overrides: [
+        {
+          matcher: { id: FieldMatcherID.byName, options: 'second' },
+          properties: [{ id: 'fieldMinMax', value: true }],
+        },
+      ],
+    };
+    const data = applyFieldOverrides({
+      data: [df], // the frame
+      fieldConfig: fieldCfgSource,
+      replaceVariables: undefined as unknown as InterpolateFunction,
+      theme: createTheme(),
+      fieldConfigRegistry: customFieldRegistry,
+    })[0];
+
+    const valueColumn0 = data.fields[0];
+    const range0 = valueColumn0.state!.range!;
+    expect(range0.max).toEqual(2000);
+    expect(range0.min).toEqual(-2);
+
+    const valueColumn1 = data.fields[1];
+    const range1 = valueColumn1.state!.range!;
+    expect(range1.max).toEqual(2);
+    expect(range1.min).toEqual(1);
+
+    const valueColumn2 = data.fields[2];
+    const range2 = valueColumn2.state!.range!;
+    expect(range2.max).toEqual(2000);
+    expect(range2.min).toEqual(-2);
+  });
+
+  it('should not calculate min if min is set', () => {
+    const df = toDataFrame({
+      fields: [{ name: 'first', type: FieldType.number, values: [-1, -2] }],
+    });
+
+    const fieldCfgSource: FieldConfigSource = {
+      defaults: {
+        min: 1,
+        fieldMinMax: true,
+      },
+      overrides: [],
+    };
+    const data = applyFieldOverrides({
+      data: [df], // the frame
+      fieldConfig: fieldCfgSource,
+      replaceVariables: undefined as unknown as InterpolateFunction,
+      theme: createTheme(),
+      fieldConfigRegistry: customFieldRegistry,
+    })[0];
+
+    const valueColumn0 = data.fields[0];
+    const range0 = valueColumn0.state!.range!;
+    expect(range0.max).toEqual(-1);
+    expect(range0.min).toEqual(1);
   });
 
   it('getLinks should use applied field config', () => {
@@ -440,6 +611,151 @@ describe('setFieldConfigDefaults', () => {
         },
       }
     `);
+  });
+
+  it('applies field config defaults correctly when links property exist in field config and no links are defined in panel', () => {
+    const dsFieldConfig: FieldConfig = {
+      links: [
+        {
+          title: 'Google link',
+          url: 'https://google.com',
+        },
+      ],
+    };
+
+    const panelFieldConfig: FieldConfig = {};
+
+    const context: FieldOverrideEnv = {
+      data: [],
+      field: { type: FieldType.number } as Field,
+      dataFrameIndex: 0,
+      fieldConfigRegistry: customFieldRegistry,
+    };
+
+    // we mutate dsFieldConfig
+    // @ts-ignore
+    setFieldConfigDefaults(dsFieldConfig, panelFieldConfig, context);
+
+    expect(dsFieldConfig).toMatchInlineSnapshot(`
+      {
+        "custom": {},
+        "links": [
+          {
+            "title": "Google link",
+            "url": "https://google.com",
+          },
+        ],
+      }
+    `);
+  });
+
+  it('applies field config defaults correctly when links property exist in panel config and no links are defined in ds field config', () => {
+    const dsFieldConfig: FieldConfig = {};
+
+    const panelFieldConfig: FieldConfig = {
+      links: [
+        {
+          title: 'Google link',
+          url: 'https://google.com',
+        },
+      ],
+    };
+
+    const context: FieldOverrideEnv = {
+      data: [],
+      field: { type: FieldType.number } as Field,
+      dataFrameIndex: 0,
+      fieldConfigRegistry: customFieldRegistry,
+    };
+
+    // we mutate dsFieldConfig
+    // @ts-ignore
+    setFieldConfigDefaults(dsFieldConfig, panelFieldConfig, context);
+
+    expect(dsFieldConfig).toMatchInlineSnapshot(`
+      {
+        "custom": {},
+        "links": [
+          {
+            "title": "Google link",
+            "url": "https://google.com",
+          },
+        ],
+      }
+    `);
+  });
+
+  it('applies a merge strategy for links when they exist in ds config and panel', () => {
+    const dsFieldConfig: FieldConfig = {
+      links: [
+        {
+          title: 'Google link',
+          url: 'https://google.com',
+        },
+      ],
+    };
+
+    const panelFieldConfig: FieldConfig = {
+      links: [
+        {
+          title: 'Grafana',
+          url: 'https://grafana.com',
+        },
+      ],
+    };
+
+    const context: FieldOverrideEnv = {
+      data: [],
+      field: { type: FieldType.number } as Field,
+      dataFrameIndex: 0,
+      fieldConfigRegistry: customFieldRegistry,
+    };
+
+    // we mutate dsFieldConfig
+    setFieldConfigDefaults(dsFieldConfig, panelFieldConfig, context);
+
+    expect(dsFieldConfig).toMatchInlineSnapshot(`
+      {
+        "custom": {},
+        "links": [
+          {
+            "title": "Google link",
+            "url": "https://google.com",
+          },
+          {
+            "title": "Grafana",
+            "url": "https://grafana.com",
+          },
+        ],
+      }
+    `);
+  });
+
+  it('applies the base threshold when one does not exist in the config', () => {
+    const defaultConfig: FieldConfig = {
+      thresholds: {
+        mode: ThresholdsMode.Absolute,
+        steps: [{ value: -Infinity, color: 'red' }],
+      },
+    };
+
+    const config: FieldConfig = {
+      thresholds: {
+        mode: ThresholdsMode.Absolute,
+        steps: [{ value: 50, color: 'green' }],
+      },
+    };
+
+    const context: FieldOverrideEnv = {
+      data: [],
+      field: { type: FieldType.number } as Field,
+      dataFrameIndex: 0,
+      fieldConfigRegistry: customFieldRegistry,
+    };
+
+    setFieldConfigDefaults(config, defaultConfig, context);
+
+    expect(config.thresholds).toMatchSnapshot();
   });
 });
 
@@ -585,7 +901,7 @@ describe('getLinksSupplier', () => {
       getTimeRangeForUrl: () => ({ from: 'now-7d', to: 'now' }),
     });
 
-    const f0 = new MutableDataFrame({
+    const f0 = createDataFrame({
       name: 'A',
       fields: [
         {
@@ -621,7 +937,7 @@ describe('getLinksSupplier', () => {
     });
 
     const datasourceUid = '1234';
-    const f0 = new MutableDataFrame({
+    const f0 = createDataFrame({
       name: 'A',
       fields: [
         {
@@ -674,8 +990,8 @@ describe('getLinksSupplier', () => {
     });
 
     const datasourceUid = '1234';
-    const range = rangeUtil.relativeToTimeRange({ from: 600, to: 0 });
-    const f0 = new MutableDataFrame({
+    const range = relativeToTimeRange({ from: 600, to: 0 });
+    const f0 = createDataFrame({
       name: 'A',
       fields: [
         {
@@ -711,8 +1027,8 @@ describe('getLinksSupplier', () => {
 
     const links = supplier({ valueRowIndex: 0 });
     const rangeStr = JSON.stringify({
-      from: range.from.toISOString(),
-      to: range.to.toISOString(),
+      from: range.from.valueOf().toString(),
+      to: range.to.valueOf().toString(),
     });
     const encodeURIParams = `{"range":${rangeStr},"datasource":"${datasourceUid}","queries":["12345"]}`;
     expect(links.length).toBe(1);
@@ -735,8 +1051,8 @@ describe('getLinksSupplier', () => {
     });
     it('handles link click handlers', () => {
       const onClickSpy = jest.fn();
-      const replaceSpy = jest.fn();
-      const f0 = new MutableDataFrame({
+      const replaceSpy = jest.fn().mockImplementation((value, vars, format) => value);
+      const f0 = createDataFrame({
         name: 'A',
         fields: [
           {
@@ -747,7 +1063,10 @@ describe('getLinksSupplier', () => {
               links: [
                 {
                   url: 'should not be ignored',
-                  onClick: onClickSpy,
+                  onClick: (evt) => {
+                    onClickSpy();
+                    evt.replaceVariables?.('${foo}');
+                  },
                   title: 'title to be interpolated',
                 },
                 {
@@ -759,8 +1078,8 @@ describe('getLinksSupplier', () => {
           },
         ],
       });
-
-      const supplier = getLinksSupplier(f0, f0.fields[0], {}, replaceSpy);
+      const scopedVars = { foo: { text: 'bar', value: 'bar' } };
+      const supplier = getLinksSupplier(f0, f0.fields[0], scopedVars, replaceSpy);
       const links = supplier({});
 
       expect(links.length).toBe(2);
@@ -769,14 +1088,17 @@ describe('getLinksSupplier', () => {
 
       links[0].onClick!({});
 
-      expect(onClickSpy).toBeCalledTimes(1);
+      expect(onClickSpy).toHaveBeenCalledTimes(1);
+      expect(replaceSpy).toHaveBeenCalledTimes(5);
+      // check that onClick variable replacer has scoped vars bound to it
+      expect(replaceSpy.mock.calls[1][1]).toHaveProperty('foo', { text: 'bar', value: 'bar' });
     });
 
     it('handles links built dynamically', () => {
       const replaceSpy = jest.fn().mockReturnValue('url interpolated 10');
       const onBuildUrlSpy = jest.fn();
-
-      const f0 = new MutableDataFrame({
+      const scopedVars = { foo: { text: 'bar', value: 'bar' } };
+      const f0 = createDataFrame({
         name: 'A',
         fields: [
           {
@@ -787,8 +1109,9 @@ describe('getLinksSupplier', () => {
               links: [
                 {
                   url: 'should be ignored',
-                  onBuildUrl: () => {
+                  onBuildUrl: (evt) => {
                     onBuildUrlSpy();
+                    evt?.replaceVariables?.('${foo}');
                     return 'url to be interpolated';
                   },
                   title: 'title to be interpolated',
@@ -803,13 +1126,59 @@ describe('getLinksSupplier', () => {
         ],
       });
 
-      const supplier = getLinksSupplier(f0, f0.fields[0], {}, replaceSpy);
+      const supplier = getLinksSupplier(f0, f0.fields[0], scopedVars, replaceSpy);
       const links = supplier({});
 
       expect(onBuildUrlSpy).toBeCalledTimes(1);
       expect(links.length).toBe(2);
       expect(links[0].href).toEqual('url interpolated 10');
+      expect(replaceSpy).toBeCalledTimes(5);
+      // check that onBuildUrl variable replacer has scoped vars bound to it
+      expect(replaceSpy.mock.calls[1][1]).toHaveProperty('foo', { text: 'bar', value: 'bar' });
     });
+  });
+
+  it('handles dynamic links with onclick handler', () => {
+    const replaceSpy = jest.fn().mockReturnValue('url interpolated 10');
+    const onClickUrlSpy = jest.fn();
+    const scopedVars = { foo: { text: 'bar', value: 'bar' } };
+    const f0 = createDataFrame({
+      name: 'A',
+      fields: [
+        {
+          name: 'message',
+          type: FieldType.string,
+          config: {
+            links: [
+              {
+                url: 'should be ignored',
+                onClick: (evt) => {
+                  onClickUrlSpy();
+                  evt.replaceVariables?.('${foo}');
+                },
+                title: 'title to be interpolated',
+              },
+              {
+                url: 'should not be ignored',
+                title: 'title to be interpolated',
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    const supplier = getLinksSupplier(f0, f0.fields[0], scopedVars, replaceSpy);
+    const links = supplier({});
+    links[0].onClick!({});
+
+    expect(onClickUrlSpy).toHaveBeenCalledTimes(1);
+    expect(links.length).toBe(2);
+    expect(links[0].href).toEqual('url interpolated 10');
+    expect(links[0].onClick).toBeDefined();
+    expect(replaceSpy).toHaveBeenCalledTimes(5);
+    // check that onClick variable replacer has scoped vars bound to it
+    expect(replaceSpy.mock.calls[1][1]).toHaveProperty('foo', { text: 'bar', value: 'bar' });
   });
 });
 
@@ -844,7 +1213,7 @@ describe('applyRawFieldOverrides', () => {
 
   const getDisplayValue = (frames: DataFrame[], frameIndex: number, fieldIndex: number) => {
     const field = frames[frameIndex].fields[fieldIndex];
-    const value = field.values.get(0);
+    const value = field.values[0];
     return field.display!(value);
   };
 
@@ -918,14 +1287,14 @@ describe('applyRawFieldOverrides', () => {
       const numberAsEpoc: Field = {
         name: 'numberAsEpoc',
         type: FieldType.number,
-        values: new ArrayVector([1599045551050]),
+        values: [1599045551050],
         config: getNumberFieldConfig(),
       };
 
       const numberWithDecimals: Field = {
         name: 'numberWithDecimals',
         type: FieldType.number,
-        values: new ArrayVector([3.14159265359]),
+        values: [3.14159265359],
         config: {
           ...getNumberFieldConfig(),
           decimals: 3,
@@ -935,28 +1304,28 @@ describe('applyRawFieldOverrides', () => {
       const numberAsBoolean: Field = {
         name: 'numberAsBoolean',
         type: FieldType.number,
-        values: new ArrayVector([0]),
+        values: [0],
         config: getNumberFieldConfig(),
       };
 
       const boolean: Field = {
         name: 'boolean',
         type: FieldType.boolean,
-        values: new ArrayVector([0]),
+        values: [0],
         config: getEmptyConfig(),
       };
 
       const string: Field = {
         name: 'string',
         type: FieldType.boolean,
-        values: new ArrayVector(['A - string']),
+        values: ['A - string'],
         config: getEmptyConfig(),
       };
 
       const datetime: Field = {
         name: 'datetime',
         type: FieldType.time,
-        values: new ArrayVector([1599045551050]),
+        values: [1599045551050],
         config: {
           unit: 'dateTimeAsIso',
         },

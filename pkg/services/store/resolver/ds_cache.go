@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/grafana/grafana/pkg/infra/appcontext"
-	"github.com/grafana/grafana/pkg/plugins"
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/services/datasources"
+	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginstore"
 	"github.com/grafana/grafana/pkg/tsdb/grafanads"
 )
 
@@ -23,7 +23,7 @@ type dsVal struct {
 
 type dsCache struct {
 	ds          datasources.DataSourceService
-	pluginStore plugins.Store
+	pluginStore pluginstore.Store
 	cache       map[int64]map[string]*dsVal
 	timestamp   time.Time // across all orgIDs
 	mu          sync.Mutex
@@ -122,12 +122,12 @@ func (c *dsCache) getDS(ctx context.Context, uid string) (*dsVal, error) {
 		}
 	}
 
-	usr, err := appcontext.User(ctx)
+	usr, err := identity.GetRequester(ctx)
 	if err != nil {
 		return nil, nil // no user
 	}
 
-	v, ok := c.cache[usr.OrgID]
+	v, ok := c.cache[usr.GetOrgID()]
 	if !ok {
 		return nil, nil // org not found
 	}

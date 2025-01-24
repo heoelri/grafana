@@ -1,7 +1,8 @@
 import { Subscription } from 'rxjs';
 
-import { toDataFrame, toDataFrameDTO } from '../../dataframe';
-import { DataFrame, DataTransformerConfig, FieldDTO, FieldType } from '../../types';
+import { toDataFrame, toDataFrameDTO } from '../../dataframe/processDataFrame';
+import { DataFrame, FieldDTO, FieldType } from '../../types/dataFrame';
+import { DataTransformerConfig } from '../../types/transformations';
 import { mockTransformationsRegistry } from '../../utils/tests/mockTransformationsRegistry';
 import { transformDataFrame } from '../transformDataFrame';
 
@@ -259,7 +260,7 @@ describe('Labels as Columns', () => {
     });
 
     await expect(transformDataFrame([cfg], [source])).toEmitValuesWith((received) => {
-      expect(received[0][0].fields.map((f) => ({ [f.name]: f.values.toArray() }))).toMatchInlineSnapshot(`
+      expect(received[0][0].fields.map((f) => ({ [f.name]: f.values }))).toMatchInlineSnapshot(`
         [
           {
             "time": [
@@ -346,9 +347,8 @@ describe('Labels as Columns', () => {
     });
 
     await expect(transformDataFrame([cfg], [source])).toEmitValuesWith((received) => {
-      expect(
-        received[0].map((f) => ({ name: f.name, fields: f.fields.map((v) => ({ [v.name]: v.values.toArray() })) }))
-      ).toMatchInlineSnapshot(`
+      expect(received[0].map((f) => ({ name: f.name, fields: f.fields.map((v) => ({ [v.name]: v.values })) })))
+        .toMatchInlineSnapshot(`
         [
           {
             "fields": [
@@ -410,9 +410,8 @@ describe('Labels as Columns', () => {
     });
 
     await expect(transformDataFrame([cfg], [source])).toEmitValuesWith((received) => {
-      expect(
-        received[0].map((f) => ({ name: f.name, fields: f.fields.map((v) => ({ [v.name]: v.values.toArray() })) }))
-      ).toMatchInlineSnapshot(`
+      expect(received[0].map((f) => ({ name: f.name, fields: f.fields.map((v) => ({ [v.name]: v.values })) })))
+        .toMatchInlineSnapshot(`
         [
           {
             "fields": [
@@ -457,7 +456,7 @@ describe('Labels as Columns', () => {
 function toSimpleObject(frame: DataFrame) {
   const obj: Record<string, unknown> = {};
   for (const field of frame.fields) {
-    obj[field.name] = field.values.toArray();
+    obj[field.name] = field.values;
   }
   return obj;
 }

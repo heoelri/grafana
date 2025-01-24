@@ -1,7 +1,7 @@
 import { clamp } from 'lodash';
 
-import { TimeZone } from '../types';
 import { DecimalCount } from '../types/displayValue';
+import { TimeZone } from '../types/time';
 
 import { getCategories } from './categories';
 import { toDateTimeValueFormatter } from './dateTimeFormatters';
@@ -102,8 +102,25 @@ function getDecimalsForValue(value: number): number {
 export function toFixedScaled(value: number, decimals: DecimalCount, ext?: string): FormattedValue {
   return {
     text: toFixed(value, decimals),
-    suffix: ext,
+    suffix: appendPluralIf(ext, Math.abs(value) > 1),
   };
+}
+
+function appendPluralIf(ext: string | undefined, condition: boolean): string | undefined {
+  if (!condition) {
+    return ext;
+  }
+
+  switch (ext) {
+    case ' min':
+    case ' hour':
+    case ' day':
+    case ' week':
+    case ' year':
+      return `${ext}s`;
+    default:
+      return ext;
+  }
 }
 
 export function toFixedUnit(unit: string, asPrefix?: boolean): ValueFormatter {

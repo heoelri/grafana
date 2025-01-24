@@ -77,6 +77,9 @@ export enum AccessControlAction {
   DashboardsPermissionsRead = 'dashboards.permissions:read',
   DashboardsPermissionsWrite = 'dashboards.permissions:write',
   DashboardsPublicWrite = 'dashboards.public:write',
+  SnapshotsCreate = 'snapshots:create',
+  SnapshotsDelete = 'snapshots:delete',
+  SnapshotsRead = 'snapshots:read',
 
   FoldersRead = 'folders:read',
   FoldersWrite = 'folders:write',
@@ -101,6 +104,11 @@ export enum AccessControlAction {
   AlertingInstanceUpdate = 'alert.instances:write',
   AlertingInstanceRead = 'alert.instances:read',
 
+  // Alerting silences
+  AlertingSilenceCreate = 'alert.silences:create',
+  AlertingSilenceUpdate = 'alert.silences:write',
+  AlertingSilenceRead = 'alert.silences:read',
+
   // Alerting Notification policies
   AlertingNotificationsRead = 'alert.notifications:read',
   AlertingNotificationsWrite = 'alert.notifications:write',
@@ -118,8 +126,29 @@ export enum AccessControlAction {
   AlertingNotificationsExternalRead = 'alert.notifications.external:read',
 
   // Alerting provisioning actions
+  AlertingProvisioningReadSecrets = 'alert.provisioning.secrets:read',
   AlertingProvisioningRead = 'alert.provisioning:read',
   AlertingProvisioningWrite = 'alert.provisioning:write',
+
+  // Alerting receivers actions
+  AlertingReceiversPermissionsRead = 'receivers.permissions:read',
+  AlertingReceiversPermissionsWrite = 'receivers.permissions:write',
+  AlertingReceiversCreate = 'alert.notifications.receivers:create',
+  AlertingReceiversWrite = 'alert.notifications.receivers:write',
+  AlertingReceiversRead = 'alert.notifications.receivers:read',
+
+  // Alerting routes actions
+  AlertingRoutesRead = 'alert.notifications.routes:read',
+  AlertingRoutesWrite = 'alert.notifications.routes:write',
+
+  // Alerting time intervals actions
+  AlertingTimeIntervalsRead = 'alert.notifications.time-intervals:read',
+  AlertingTimeIntervalsWrite = 'alert.notifications.time-intervals:write',
+
+  // Alerting templates actions
+  AlertingTemplatesRead = 'alert.notifications.templates:read',
+  AlertingTemplatesWrite = 'alert.notifications.templates:write',
+  AlertingTemplatesDelete = 'alert.notifications.templates:delete',
 
   ActionAPIKeysRead = 'apikeys:read',
   ActionAPIKeysCreate = 'apikeys:create',
@@ -127,6 +156,17 @@ export enum AccessControlAction {
 
   PluginsInstall = 'plugins:install',
   PluginsWrite = 'plugins:write',
+
+  // Settings
+  SettingsRead = 'settings:read',
+  SettingsWrite = 'settings:write',
+
+  // GroupSync
+  GroupSyncMappingsRead = 'groupsync.mappings:read',
+  GroupSyncMappingsWrite = 'groupsync.mappings:write',
+
+  // Migration Assistant
+  MigrationAssistantMigrate = 'migrationassistant:migrate',
 }
 
 export interface Role {
@@ -137,6 +177,7 @@ export interface Role {
   group: string;
   global: boolean;
   delegatable?: boolean;
+  mapped?: boolean;
   version: number;
   created: string;
   updated: string;

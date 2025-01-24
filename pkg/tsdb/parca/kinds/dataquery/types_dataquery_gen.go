@@ -7,43 +7,42 @@
 //
 // Run 'make gen-cue' from repository root to regenerate.
 
+// Code generated - EDITING IS FUTILE. DO NOT EDIT.
+
 package dataquery
 
-// Defines values for ParcaQueryType.
+type ParcaQueryType string
+
 const (
-	ParcaQueryTypeBoth    ParcaQueryType = "both"
 	ParcaQueryTypeMetrics ParcaQueryType = "metrics"
 	ParcaQueryTypeProfile ParcaQueryType = "profile"
+	ParcaQueryTypeBoth    ParcaQueryType = "both"
 )
 
-// ParcaDataQuery defines model for ParcaDataQuery.
 type ParcaDataQuery struct {
-	// For mixed data sources the selected datasource is on the query level.
-	// For non mixed scenarios this is undefined.
-	// TODO find a better way to do this ^ that's friendly to schema
-	// TODO this shouldn't be unknown but DataSourceRef | null
-	Datasource *interface{} `json:"datasource,omitempty"`
-
-	// Hide true if query is disabled (ie should not be returned to the dashboard)
-	// Note this does not always imply that the query should not be executed since
-	// the results from a hidden query may be used as the input to other queries (SSE etc)
-	Hide *bool `json:"hide,omitempty"`
-
 	// Specifies the query label selectors.
 	LabelSelector string `json:"labelSelector"`
-
 	// Specifies the type of profile to query.
 	ProfileTypeId string `json:"profileTypeId"`
-
-	// Specify the query flavor
-	// TODO make this required and give it a default
-	QueryType *string `json:"queryType,omitempty"`
-
 	// A unique identifier for the query within the list of targets.
 	// In server side expressions, the refId is used as a variable name to identify results.
 	// By default, the UI will assign A->Z; however setting meaningful names may be useful.
 	RefId string `json:"refId"`
+	// If hide is set to true, Grafana will filter out the response(s) associated with this query before returning it to the panel.
+	Hide *bool `json:"hide,omitempty"`
+	// Specify the query flavor
+	// TODO make this required and give it a default
+	QueryType *string `json:"queryType,omitempty"`
+	// For mixed data sources the selected datasource is on the query level.
+	// For non mixed scenarios this is undefined.
+	// TODO find a better way to do this ^ that's friendly to schema
+	// TODO this shouldn't be unknown but DataSourceRef | null
+	Datasource any `json:"datasource,omitempty"`
 }
 
-// ParcaQueryType defines model for ParcaQueryType.
-type ParcaQueryType string
+// NewParcaDataQuery creates a new ParcaDataQuery object.
+func NewParcaDataQuery() *ParcaDataQuery {
+	return &ParcaDataQuery{
+		LabelSelector: "{}",
+	}
+}

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/grafana/grafana/pkg/models/roletype"
-	"github.com/grafana/grafana/pkg/services/user"
-	"github.com/grafana/grafana/pkg/util/errutil"
+	"github.com/grafana/grafana/pkg/apimachinery/errutil"
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
+	"github.com/grafana/grafana/pkg/services/search/model"
 )
 
 // Typed errors
@@ -16,8 +16,8 @@ var (
 	ErrLastOrgAdmin                            = errors.New("cannot remove last organization admin")
 	ErrOrgUserNotFound                         = errors.New("cannot find the organization user")
 	ErrOrgUserAlreadyAdded                     = errors.New("user is already added to organization")
-	ErrOrgNotFound                             = errutil.NewBase(errutil.StatusNotFound, "org.notFound", errutil.WithPublicMessage("organization not found"))
-	ErrCannotChangeRoleForExternallySyncedUser = errutil.NewBase(errutil.StatusForbidden, "org.externallySynced", errutil.WithPublicMessage("cannot change role for externally synced user"))
+	ErrOrgNotFound                             = errutil.NotFound("org.notFound", errutil.WithPublicMessage("organization not found"))
+	ErrCannotChangeRoleForExternallySyncedUser = errutil.Forbidden("org.externallySynced", errutil.WithPublicMessage("cannot change role for externally synced user"))
 )
 
 type Org struct {
@@ -44,12 +44,13 @@ type OrgUser struct {
 	Updated time.Time
 }
 
-type RoleType = roletype.RoleType
+type RoleType = identity.RoleType
 
 const (
-	RoleViewer RoleType = "Viewer"
-	RoleEditor RoleType = "Editor"
-	RoleAdmin  RoleType = "Admin"
+	RoleNone   RoleType = identity.RoleNone
+	RoleViewer RoleType = identity.RoleViewer
+	RoleEditor RoleType = identity.RoleEditor
+	RoleAdmin  RoleType = identity.RoleAdmin
 )
 
 type CreateOrgCommand struct {
@@ -142,6 +143,7 @@ type UpdateOrgUserCommand struct {
 type OrgUserDTO struct {
 	OrgID              int64           `json:"orgId" xorm:"org_id"`
 	UserID             int64           `json:"userId" xorm:"user_id"`
+	UID                string          `json:"uid" xorm:"uid"`
 	Email              string          `json:"email"`
 	Name               string          `json:"name"`
 	AvatarURL          string          `json:"avatarUrl" xorm:"avatar_url"`
@@ -173,19 +175,20 @@ type GetOrgUsersQuery struct {
 	// Flag used to allow oss edition to query users without access control
 	DontEnforceAccessControl bool
 
-	User *user.SignedInUser
+	User identity.Requester
 }
 
 type SearchOrgUsersQuery struct {
-	UserID int64 `xorm:"user_id"`
-	OrgID  int64 `xorm:"org_id"`
-	Query  string
-	Page   int
-	Limit  int
+	UserID   int64 `xorm:"user_id"`
+	OrgID    int64 `xorm:"org_id"`
+	Query    string
+	Page     int
+	Limit    int
+	SortOpts []model.SortOption
 	// Flag used to allow oss edition to query users without access control
 	DontEnforceAccessControl bool
 
-	User *user.SignedInUser
+	User identity.Requester
 }
 
 type SearchOrgUsersQueryResult struct {

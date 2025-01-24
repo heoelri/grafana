@@ -8,7 +8,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	apikeygenprefix "github.com/grafana/grafana/pkg/components/apikeygenprefixed"
+	"github.com/grafana/grafana/pkg/components/satokengen"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
 	"github.com/grafana/grafana/pkg/services/apikey"
@@ -19,6 +19,12 @@ import (
 
 type Authenticator interface {
 	Authenticate(ctx context.Context) (context.Context, error)
+}
+
+type AuthenticatorFunc func(context.Context) (context.Context, error)
+
+func (fn AuthenticatorFunc) Authenticate(ctx context.Context) (context.Context, error) {
+	return fn(ctx)
 }
 
 // authenticator can authenticate GRPC requests.
@@ -79,7 +85,7 @@ func (a *authenticator) tokenAuth(ctx context.Context) (context.Context, error) 
 }
 
 func (a *authenticator) getSignedInUser(ctx context.Context, token string) (*user.SignedInUser, error) {
-	decoded, err := apikeygenprefix.Decode(token)
+	decoded, err := satokengen.Decode(token)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +105,7 @@ func (a *authenticator) getSignedInUser(ctx context.Context, token string) (*use
 	}
 
 	querySignedInUser := user.GetSignedInUserQuery{UserID: *apikey.ServiceAccountId, OrgID: apikey.OrgID}
-	signedInUser, err := a.UserService.GetSignedInUserWithCacheCtx(ctx, &querySignedInUser)
+	signedInUser, err := a.UserService.GetSignedInUser(ctx, &querySignedInUser)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +132,7 @@ func (a *authenticator) getSignedInUser(ctx context.Context, token string) (*use
 		if err != nil {
 			a.logger.Error("failed fetching permissions for user", "userID", signedInUser.UserID, "error", err)
 		}
-		signedInUser.Permissions[signedInUser.OrgID] = accesscontrol.GroupScopesByAction(permissions)
+		signedInUser.Permissions[signedInUser.OrgID] = accesscontrol.GroupScopesByActionContext(context.Background(), permissions)
 	}
 
 	return signedInUser, nil

@@ -1,12 +1,19 @@
 ---
-title: Provision dashboards and data sources
-summary: Treat your configuration as code.
+Feedback Link: https://github.com/grafana/tutorials/issues/new
+authors:
+  - grafana_labs
+categories:
+  - administration
 description: Treat your configuration as code.
 id: provision-dashboards-and-data-sources
-categories: ['administration']
-tags: ['intermediate']
-authors: ['grafana_labs']
-Feedback Link: https://github.com/grafana/tutorials/issues/new
+labels:
+  products:
+    - enterprise
+    - oss
+summary: Treat your configuration as code.
+tags:
+  - intermediate
+title: Provision dashboards and data sources
 weight: 40
 ---
 
@@ -37,7 +44,6 @@ Grafana supports configuration as code through _provisioning_. The resources tha
 
 - [Dashboards](/docs/grafana/latest/administration/provisioning/#dashboards)
 - [Data sources](/docs/grafana/latest/administration/provisioning/#datasources)
-- [Alert notification channels](/docs/grafana/latest/administration/provisioning/#alert-notification-channels)
 
 ## Set the provisioning directory
 
@@ -61,8 +67,6 @@ provisioning/
   datasources/
     <yaml files>
   dashboards/
-    <yaml files>
-  notifiers/
     <yaml files>
 ```
 
@@ -220,7 +224,6 @@ For more information on how to configure dashboard providers, refer to [Dashboar
      "refresh": "",
      "rows": [],
      "schemaVersion": 16,
-     "style": "dark",
      "tags": ["kubernetes"],
      "templating": {
        "list": []
@@ -229,10 +232,7 @@ For more information on how to configure dashboard providers, refer to [Dashboar
        "from": "now-6h",
        "to": "now"
      },
-     "timepicker": {
-       "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"],
-       "time_options": ["5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
-     },
+     "timepicker": {},
      "timezone": "browser",
      "title": "Cluster",
      "version": 0

@@ -2,12 +2,12 @@ import Prism, { Grammar } from 'prismjs';
 import { lastValueFrom } from 'rxjs';
 
 import { AbsoluteTimeRange, HistoryItem, LanguageProvider } from '@grafana/data';
+import { BackendDataSourceResponse, FetchResponse, TemplateSrv, getTemplateSrv } from '@grafana/runtime';
 import { CompletionItemGroup, SearchFunctionType, Token, TypeaheadInput, TypeaheadOutput } from '@grafana/ui';
-import { getTemplateSrv } from 'app/features/templating/template_srv';
 
 import { CloudWatchDatasource } from '../../datasource';
-import { CloudWatchQuery, LogGroup, TSDBResponse } from '../../types';
-import { interpolateStringArrayUsingSingleOrMultiValuedVariable } from '../../utils/templateVariableUtils';
+import { CloudWatchQuery, LogGroup } from '../../types';
+import { fetchLogGroupFields } from '../utils';
 
 import syntax, {
   AGGREGATION_FUNCTIONS_STATS,
@@ -33,11 +33,13 @@ export class CloudWatchLogsLanguageProvider extends LanguageProvider {
   started = false;
   declare initialRange: AbsoluteTimeRange;
   datasource: CloudWatchDatasource;
+  templateSrv: TemplateSrv;
 
-  constructor(datasource: CloudWatchDatasource, initialValues?: any) {
+  constructor(datasource: CloudWatchDatasource, templateSrv?: TemplateSrv, initialValues?: any) {
     super();
 
     this.datasource = datasource;
+    this.templateSrv = templateSrv ?? getTemplateSrv();
 
     Object.assign(this, initialValues);
   }
@@ -49,7 +51,7 @@ export class CloudWatchLogsLanguageProvider extends LanguageProvider {
     return syntax;
   }
 
-  request = (url: string, params?: any): Promise<TSDBResponse> => {
+  request = (url: string, params?: any): Promise<FetchResponse<BackendDataSourceResponse>> => {
     return lastValueFrom(this.datasource.logsQueryRunner.awsRequest(url, params));
   };
 
@@ -128,24 +130,6 @@ export class CloudWatchLogsLanguageProvider extends LanguageProvider {
       suggestions: [],
     };
   }
-
-  private fetchFields = async (logGroups: LogGroup[], region: string): Promise<string[]> => {
-    const interpolatedLogGroups = interpolateStringArrayUsingSingleOrMultiValuedVariable(
-      getTemplateSrv(),
-      logGroups.map((lg) => lg.name),
-      {},
-      'text'
-    );
-    const results = await Promise.all(
-      interpolatedLogGroups.map((logGroupName) =>
-        this.datasource.resources
-          .getLogGroupFields({ logGroupName, region })
-          .then((fields) => fields.filter((f) => f).map((f) => f.value.name ?? ''))
-      )
-    );
-
-    return results.flat();
-  };
 
   private handleKeyword = async (context?: TypeaheadContext): Promise<TypeaheadOutput> => {
     const suggs = await this.getFieldCompletionItems(context?.logGroups, context?.region || 'default');
@@ -310,7 +294,7 @@ export class CloudWatchLogsLanguageProvider extends LanguageProvider {
       return { suggestions: [] };
     }
 
-    const fields = await this.fetchFields(logGroups, region);
+    const fields = await fetchLogGroupFields(logGroups, region, this.templateSrv, this.datasource.resources);
     return {
       suggestions: [
         {

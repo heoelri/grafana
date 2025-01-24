@@ -1,22 +1,18 @@
-import { screen, waitForElementToBeRemoved } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import React from 'react';
 import { renderRuleEditor, ui } from 'test/helpers/alertingRuleEditor';
-import { byRole, byText } from 'testing-library-selector';
+import { screen } from 'test/test-utils';
+import { byText } from 'testing-library-selector';
 
-import { setDataSourceSrv } from '@grafana/runtime';
 import { contextSrv } from 'app/core/services/context_srv';
+import { AccessControlAction } from 'app/types';
 import { PromApiFeatures, PromApplication } from 'app/types/unified-alerting-dto';
 
-import { searchFolders } from '../../manage-dashboards/state/actions';
-
-import { discoverFeatures } from './api/buildInfo';
-import { fetchRulerRules, fetchRulerRulesGroup, fetchRulerRulesNamespace, setRulerRuleGroup } from './api/ruler';
+import { discoverFeaturesByUid } from './api/buildInfo';
+import { fetchRulerRulesGroup } from './api/ruler';
 import { ExpressionEditorProps } from './components/rule-editor/ExpressionEditor';
-import { disableRBAC, mockDataSource, MockDataSourceSrv } from './mocks';
-import { fetchRulerRulesIfNotFetchedYet } from './state/actions';
-import * as config from './utils/config';
-import { DataSourceType } from './utils/datasource';
+import { setupMswServer } from './mockApi';
+import { grantUserPermissions, mockDataSource } from './mocks';
+import { setupDataSources } from './testSetup/datasources';
+import { DataSourceType, GRAFANA_DATASOURCE_NAME, GRAFANA_RULES_SOURCE_NAME } from './utils/datasource';
 
 jest.mock('./components/rule-editor/ExpressionEditor', () => ({
   // eslint-disable-next-line react/display-name
@@ -26,8 +22,12 @@ jest.mock('./components/rule-editor/ExpressionEditor', () => ({
 }));
 
 jest.mock('./api/buildInfo');
-jest.mock('./api/ruler');
-jest.mock('../../../../app/features/manage-dashboards/state/actions');
+jest.mock('./api/ruler', () => ({
+  rulerUrlBuilder: jest.requireActual('./api/ruler').rulerUrlBuilder,
+  fetchRulerRules: jest.fn(),
+  fetchRulerRulesGroup: jest.fn(),
+  fetchRulerRulesNamespace: jest.fn(),
+}));
 
 // there's no angular scope in test and things go terribly wrong when trying to render the query editor row.
 // lets just skip it
@@ -36,18 +36,86 @@ jest.mock('app/features/query/components/QueryEditorRow', () => ({
   QueryEditorRow: () => <p>hi</p>,
 }));
 
-jest.spyOn(config, 'getAllDataSources');
+jest.mock('./components/rule-editor/util', () => {
+  const originalModule = jest.requireActual('./components/rule-editor/util');
+  return {
+    ...originalModule,
+    getThresholdsForQueries: jest.fn(() => ({})),
+  };
+});
+
+const dataSources = {
+  grafana: mockDataSource(
+    {
+      type: 'datasource',
+      uid: GRAFANA_RULES_SOURCE_NAME,
+      name: GRAFANA_DATASOURCE_NAME,
+    },
+    { alerting: true }
+  ),
+  // can edit rules
+  loki: mockDataSource(
+    {
+      type: DataSourceType.Loki,
+      uid: 'loki-with-ruler',
+      name: 'loki with ruler',
+    },
+    { alerting: true }
+  ),
+  loki_disabled: mockDataSource(
+    {
+      type: DataSourceType.Loki,
+      name: 'loki disabled for alerting',
+      uid: 'loki-without-alerting',
+      jsonData: { manageAlerts: false },
+    },
+    { alerting: true }
+  ),
+  // can edit rules
+  prom: mockDataSource(
+    {
+      type: DataSourceType.Prometheus,
+      name: 'cortex with ruler',
+      uid: 'cortex-with-ruler',
+      isDefault: true,
+    },
+    { alerting: true }
+  ),
+  // cannot edit rules
+  loki_local_rule_store: mockDataSource(
+    {
+      type: DataSourceType.Loki,
+      name: 'loki with local rule store',
+      uid: 'loki-with-local-rule-store',
+    },
+    { alerting: true }
+  ),
+  // cannot edit rules
+  prom_no_ruler_api: mockDataSource(
+    {
+      type: DataSourceType.Loki,
+      name: 'cortex without ruler api',
+      uid: 'cortex-without-ruler-api',
+    },
+    { alerting: true }
+  ),
+  // not a supported datasource type
+  splunk: mockDataSource(
+    {
+      type: 'splunk',
+      name: 'splunk',
+      uid: 'splunk',
+    },
+    { alerting: true }
+  ),
+};
+
+setupDataSources(...Object.values(dataSources));
 
 const mocks = {
-  getAllDataSources: jest.mocked(config.getAllDataSources),
-  searchFolders: jest.mocked(searchFolders),
   api: {
-    discoverFeatures: jest.mocked(discoverFeatures),
+    discoverFeaturesByUid: jest.mocked(discoverFeaturesByUid),
     fetchRulerRulesGroup: jest.mocked(fetchRulerRulesGroup),
-    setRulerRuleGroup: jest.mocked(setRulerRuleGroup),
-    fetchRulerRulesNamespace: jest.mocked(fetchRulerRulesNamespace),
-    fetchRulerRules: jest.mocked(fetchRulerRules),
-    fetchRulerRulesIfNotFetchedYet: jest.mocked(fetchRulerRulesIfNotFetchedYet),
   },
 };
 
@@ -64,81 +132,30 @@ function getDiscoverFeaturesMock(application: PromApplication, features?: Partia
   };
 }
 
+setupMswServer();
+
 describe('RuleEditor cloud: checking editable data sources', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     contextSrv.isEditor = true;
     contextSrv.hasEditPermissionInFolders = true;
+    // grant all permissions in AccessControlActionEnum
+    grantUserPermissions(Object.values(AccessControlAction));
   });
 
-  disableRBAC();
-
   it('for cloud alerts, should only allow to select editable rules sources', async () => {
-    const dataSources = {
-      // can edit rules
-      loki: mockDataSource(
-        {
-          type: DataSourceType.Loki,
-          name: 'loki with ruler',
-        },
-        { alerting: true }
-      ),
-      loki_disabled: mockDataSource(
-        {
-          type: DataSourceType.Loki,
-          name: 'loki disabled for alerting',
-          jsonData: {
-            manageAlerts: false,
-          },
-        },
-        { alerting: true }
-      ),
-      // can edit rules
-      prom: mockDataSource(
-        {
-          type: DataSourceType.Prometheus,
-          name: 'cortex with ruler',
-        },
-        { alerting: true }
-      ),
-      // cannot edit rules
-      loki_local_rule_store: mockDataSource(
-        {
-          type: DataSourceType.Loki,
-          name: 'loki with local rule store',
-        },
-        { alerting: true }
-      ),
-      // cannot edit rules
-      prom_no_ruler_api: mockDataSource(
-        {
-          type: DataSourceType.Loki,
-          name: 'cortex without ruler api',
-        },
-        { alerting: true }
-      ),
-      // not a supported datasource type
-      splunk: mockDataSource(
-        {
-          type: 'splunk',
-          name: 'splunk',
-        },
-        { alerting: true }
-      ),
-    };
-
-    mocks.api.discoverFeatures.mockImplementation(async (dataSourceName) => {
-      if (dataSourceName === 'loki with ruler' || dataSourceName === 'cortex with ruler') {
+    mocks.api.discoverFeaturesByUid.mockImplementation(async (dataSourceUid) => {
+      if (dataSourceUid === dataSources.loki.uid || dataSourceUid === dataSources.prom.uid) {
         return getDiscoverFeaturesMock(PromApplication.Cortex, { rulerApiEnabled: true });
       }
-      if (dataSourceName === 'loki with local rule store') {
+      if (dataSourceUid === dataSources.loki_local_rule_store.uid) {
         return getDiscoverFeaturesMock(PromApplication.Cortex);
       }
-      if (dataSourceName === 'cortex without ruler api') {
+      if (dataSourceUid === dataSources.prom_no_ruler_api.uid) {
         return getDiscoverFeaturesMock(PromApplication.Cortex);
       }
 
-      throw new Error(`${dataSourceName} not handled`);
+      throw new Error(`${dataSourceUid} not handled`);
     });
 
     mocks.api.fetchRulerRulesGroup.mockImplementation(async ({ dataSourceName }) => {
@@ -159,22 +176,25 @@ describe('RuleEditor cloud: checking editable data sources', () => {
       return null;
     });
 
-    setDataSourceSrv(new MockDataSourceSrv(dataSources));
-    mocks.getAllDataSources.mockReturnValue(Object.values(dataSources));
-    mocks.searchFolders.mockResolvedValue([]);
-
     // render rule editor, select mimir/loki managed alerts
-    renderRuleEditor();
-    await waitForElementToBeRemoved(screen.getAllByTestId('Spinner'));
+    const { user } = renderRuleEditor();
 
     await ui.inputs.name.find();
-    await userEvent.click(await ui.buttons.lotexAlert.get());
+
+    const switchToCloudButton = screen.getByText('Data source-managed');
+    expect(switchToCloudButton).toBeInTheDocument();
+
+    await user.click(switchToCloudButton);
+
+    //expressions are removed after switching to data-source managed
+    expect(screen.queryAllByLabelText('Remove expression')).toHaveLength(0);
 
     // check that only rules sources that have ruler available are there
     const dataSourceSelect = ui.inputs.dataSource.get();
-    await userEvent.click(byRole('combobox').get(dataSourceSelect));
-    expect(await byText('loki with ruler').query()).toBeInTheDocument();
+    await user.click(dataSourceSelect);
+
     expect(byText('cortex with ruler').query()).toBeInTheDocument();
+    expect(byText('loki with ruler').query()).toBeInTheDocument();
     expect(byText('loki with local rule store').query()).not.toBeInTheDocument();
     expect(byText('prom without ruler api').query()).not.toBeInTheDocument();
     expect(byText('splunk').query()).not.toBeInTheDocument();

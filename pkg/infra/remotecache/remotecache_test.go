@@ -12,10 +12,16 @@ import (
 	"github.com/grafana/grafana/pkg/infra/usagestats"
 	"github.com/grafana/grafana/pkg/services/secrets"
 	"github.com/grafana/grafana/pkg/services/secrets/fakes"
+	"github.com/grafana/grafana/pkg/services/sqlstore"
 	"github.com/grafana/grafana/pkg/setting"
+	"github.com/grafana/grafana/pkg/tests/testsuite"
 )
 
-func createTestClient(t *testing.T, opts *setting.RemoteCacheOptions, sqlstore db.DB) CacheStorage {
+func TestMain(m *testing.M) {
+	testsuite.Run(m)
+}
+
+func createTestClient(t *testing.T, opts *setting.RemoteCacheSettings, sqlstore db.DB) CacheStorage {
 	t.Helper()
 
 	cfg := &setting.Cfg{
@@ -28,56 +34,24 @@ func createTestClient(t *testing.T, opts *setting.RemoteCacheOptions, sqlstore d
 }
 
 func TestCachedBasedOnConfig(t *testing.T) {
-	cfg := setting.NewCfg()
+	db, cfg := sqlstore.InitTestDB(t)
 	err := cfg.Load(setting.CommandLineArgs{
 		HomePath: "../../../",
 	})
 	require.Nil(t, err, "Failed to load config")
 
-	client := createTestClient(t, cfg.RemoteCacheOptions, db.InitTestDB(t))
+	client := createTestClient(t, cfg.RemoteCacheOptions, db)
 	runTestsForClient(t, client)
-	runCountTestsForClient(t, cfg.RemoteCacheOptions, db.InitTestDB(t))
 }
 
 func TestInvalidCacheTypeReturnsError(t *testing.T) {
-	_, err := createClient(&setting.RemoteCacheOptions{Name: "invalid"}, nil, nil)
+	_, err := createClient(&setting.RemoteCacheSettings{Name: "invalid"}, nil, nil)
 	assert.Equal(t, err, ErrInvalidCacheType)
 }
 
 func runTestsForClient(t *testing.T, client CacheStorage) {
 	canPutGetAndDeleteCachedObjects(t, client)
 	canNotFetchExpiredItems(t, client)
-}
-
-func runCountTestsForClient(t *testing.T, opts *setting.RemoteCacheOptions, sqlstore db.DB) {
-	client := createTestClient(t, opts, sqlstore)
-	expectError := false
-	if opts.Name == memcachedCacheType {
-		expectError = true
-	}
-
-	t.Run("can count items", func(t *testing.T) {
-		cacheableValue := []byte("hej hej")
-
-		err := client.Set(context.Background(), "pref-key1", cacheableValue, 0)
-		require.NoError(t, err)
-
-		err = client.Set(context.Background(), "pref-key2", cacheableValue, 0)
-		require.NoError(t, err)
-
-		err = client.Set(context.Background(), "key3-not-pref", cacheableValue, 0)
-		require.NoError(t, err)
-
-		n, errC := client.Count(context.Background(), "pref-")
-		if expectError {
-			require.ErrorIs(t, ErrNotImplemented, errC)
-			assert.Equal(t, int64(0), n)
-			return
-		}
-
-		require.NoError(t, errC)
-		assert.Equal(t, int64(2), n)
-	})
 }
 
 func canPutGetAndDeleteCachedObjects(t *testing.T, client CacheStorage) {
@@ -95,7 +69,8 @@ func canPutGetAndDeleteCachedObjects(t *testing.T, client CacheStorage) {
 	assert.Equal(t, err, nil)
 
 	_, err = client.Get(context.Background(), "key1")
-	assert.Equal(t, err, ErrCacheItemNotFound)
+	// redis client returns redis.Nil error when key does not exist.
+	assert.Error(t, err)
 }
 
 func canNotFetchExpiredItems(t *testing.T, client CacheStorage) {
@@ -109,16 +84,17 @@ func canNotFetchExpiredItems(t *testing.T, client CacheStorage) {
 
 	// should not be able to read that value since its expired
 	_, err = client.Get(context.Background(), "key1")
-	assert.Equal(t, err, ErrCacheItemNotFound)
+	// redis client returns redis.Nil error when key does not exist.
+	assert.Error(t, err)
 }
 
 func TestCollectUsageStats(t *testing.T) {
-	wantMap := map[string]interface{}{
+	wantMap := map[string]any{
 		"stats.remote_cache.redis.count":           1,
 		"stats.remote_cache.encrypt_enabled.count": 1,
 	}
 	cfg := setting.NewCfg()
-	cfg.RemoteCacheOptions = &setting.RemoteCacheOptions{Name: redisCacheType, Encryption: true}
+	cfg.RemoteCacheOptions = &setting.RemoteCacheSettings{Name: redisCacheType, Encryption: true}
 
 	remoteCache := &RemoteCache{
 		Cfg: cfg,
@@ -167,39 +143,6 @@ func TestEncryptedCache(t *testing.T) {
 	v, err = encryptedCache.Get(context.Background(), "foo")
 	require.NoError(t, err)
 	require.Equal(t, "bar", string(v))
-}
-
-type fakeCacheStorage struct {
-	storage map[string][]byte
-}
-
-func (fcs fakeCacheStorage) Set(_ context.Context, key string, value []byte, exp time.Duration) error {
-	fcs.storage[key] = value
-	return nil
-}
-
-func (fcs fakeCacheStorage) Get(_ context.Context, key string) ([]byte, error) {
-	value, exist := fcs.storage[key]
-	if !exist {
-		return nil, ErrCacheItemNotFound
-	}
-
-	return value, nil
-}
-
-func (fcs fakeCacheStorage) Delete(_ context.Context, key string) error {
-	delete(fcs.storage, key)
-	return nil
-}
-
-func (fcs fakeCacheStorage) Count(_ context.Context, prefix string) (int64, error) {
-	return int64(len(fcs.storage)), nil
-}
-
-func NewFakeCacheStorage() CacheStorage {
-	return fakeCacheStorage{
-		storage: map[string][]byte{},
-	}
 }
 
 type fakeSecretsService struct{}

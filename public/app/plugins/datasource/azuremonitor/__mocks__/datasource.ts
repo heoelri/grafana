@@ -1,8 +1,27 @@
-import Datasource from '../datasource';
+import { getTemplateSrv, TemplateSrv } from '@grafana/runtime';
 
-type DeepPartial<T> = {
-  [P in keyof T]?: DeepPartial<T[P]>;
-};
+import Datasource from '../datasource';
+import { AzureMonitorDataSourceInstanceSettings } from '../types';
+
+import { createMockInstanceSetttings } from './instanceSettings';
+import { DeepPartial } from './utils';
+
+export interface Context {
+  instanceSettings: AzureMonitorDataSourceInstanceSettings;
+  templateSrv: TemplateSrv;
+  datasource: Datasource;
+  getResource: jest.Mock;
+}
+
+export function createContext(overrides?: DeepPartial<Context>): Context {
+  const instanceSettings = createMockInstanceSetttings(overrides?.instanceSettings);
+  return {
+    instanceSettings,
+    templateSrv: getTemplateSrv(),
+    datasource: new Datasource(instanceSettings),
+    getResource: jest.fn(),
+  };
+}
 
 export default function createMockDatasource(overrides?: DeepPartial<Datasource>) {
   // We make this a partial so we get _some_ kind of type safety when making this, rather than
@@ -46,6 +65,7 @@ export default function createMockDatasource(overrides?: DeepPartial<Datasource>
     azureLogAnalyticsDatasource: {
       getKustoSchema: () => Promise.resolve(),
       getDeprecatedDefaultWorkSpace: () => 'defaultWorkspaceId',
+      getBasicLogsQueryUsage: jest.fn(),
     },
     resourcePickerData: {
       getSubscriptions: () => jest.fn().mockResolvedValue([]),
@@ -55,6 +75,7 @@ export default function createMockDatasource(overrides?: DeepPartial<Datasource>
       getResourceURIDisplayProperties: jest.fn().mockResolvedValue({}),
     },
     getVariablesRaw: jest.fn().mockReturnValue([]),
+    currentUserAuth: false,
     ...overrides,
   };
 

@@ -3,7 +3,12 @@ package es
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
 )
+
+// DateFormatEpochMS represents a date format of epoch milliseconds (epoch_millis)
+const DateFormatEpochMS = "epoch_millis"
 
 // SearchRequest represents a search request
 type SearchRequest struct {
@@ -14,6 +19,7 @@ type SearchRequest struct {
 	Query       *Query
 	Aggs        AggArray
 	CustomProps map[string]interface{}
+	TimeRange   backend.TimeRange
 }
 
 // MarshalJSON returns the JSON encoding of the request.
@@ -116,9 +122,6 @@ type RangeFilter struct {
 	Format string
 }
 
-// DateFormatEpochMS represents a date format of epoch milliseconds (epoch_millis)
-const DateFormatEpochMS = "epoch_millis"
-
 // MarshalJSON returns the JSON encoding of the query string filter.
 func (f *RangeFilter) MarshalJSON() ([]byte, error) {
 	root := map[string]map[string]map[string]interface{}{
@@ -204,22 +207,28 @@ func newAggDef(key string, aggregation *aggContainer) *aggDef {
 
 // HistogramAgg represents a histogram aggregation
 type HistogramAgg struct {
-	Interval    int    `json:"interval,omitempty"`
-	Field       string `json:"field"`
-	MinDocCount int    `json:"min_doc_count"`
-	Missing     *int   `json:"missing,omitempty"`
+	Interval    float64 `json:"interval,omitempty"`
+	Field       string  `json:"field"`
+	MinDocCount int     `json:"min_doc_count"`
+	Missing     *int    `json:"missing,omitempty"`
 }
 
 // DateHistogramAgg represents a date histogram aggregation
 type DateHistogramAgg struct {
-	Field          string          `json:"field"`
-	FixedInterval  string          `json:"fixed_interval,omitempty"`
-	MinDocCount    int             `json:"min_doc_count"`
-	Missing        *string         `json:"missing,omitempty"`
-	ExtendedBounds *ExtendedBounds `json:"extended_bounds"`
-	Format         string          `json:"format"`
-	Offset         string          `json:"offset,omitempty"`
-	TimeZone       string          `json:"time_zone,omitempty"`
+	Field            string          `json:"field"`
+	FixedInterval    string          `json:"fixed_interval,omitempty"`
+	CalendarInterval string          `json:"calendar_interval,omitempty"`
+	MinDocCount      int             `json:"min_doc_count"`
+	Missing          *string         `json:"missing,omitempty"`
+	ExtendedBounds   *ExtendedBounds `json:"extended_bounds"`
+	Format           string          `json:"format"`
+	Offset           string          `json:"offset,omitempty"`
+	TimeZone         string          `json:"time_zone,omitempty"`
+}
+
+// GetCalendarIntervals provides the list of intervals used for building calendar bucketAgg
+func GetCalendarIntervals() []string {
+	return []string{"1w", "1M", "1q", "1y"}
 }
 
 // FiltersAggregation represents a filters aggregation

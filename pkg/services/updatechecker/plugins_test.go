@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -12,16 +13,19 @@ import (
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/tracing"
 	"github.com/grafana/grafana/pkg/plugins"
+	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginstore"
 )
 
 func TestPluginUpdateChecker_HasUpdate(t *testing.T) {
 	t.Run("update is available", func(t *testing.T) {
+		updateCheckURL, _ := url.Parse("https://grafana.com/api/plugins/versioncheck")
+
 		svc := PluginsService{
 			availableUpdates: map[string]string{
 				"test-ds": "1.0.0",
 			},
-			pluginStore: plugins.FakePluginStore{
-				PluginList: []plugins.PluginDTO{
+			pluginStore: &pluginstore.FakePluginStore{
+				PluginList: []pluginstore.Plugin{
 					{
 						JSONData: plugins.JSONData{
 							ID:   "test-ds",
@@ -30,6 +34,7 @@ func TestPluginUpdateChecker_HasUpdate(t *testing.T) {
 					},
 				},
 			},
+			updateCheckURL: updateCheckURL,
 		}
 
 		update, exists := svc.HasUpdate(context.Background(), "test-ds")
@@ -38,13 +43,15 @@ func TestPluginUpdateChecker_HasUpdate(t *testing.T) {
 	})
 
 	t.Run("update is not available", func(t *testing.T) {
+		updateCheckURL, _ := url.Parse("https://grafana.com/api/plugins/versioncheck")
+
 		svc := PluginsService{
 			availableUpdates: map[string]string{
 				"test-panel": "0.9.0",
 				"test-app":   "0.0.1",
 			},
-			pluginStore: plugins.FakePluginStore{
-				PluginList: []plugins.PluginDTO{
+			pluginStore: &pluginstore.FakePluginStore{
+				PluginList: []pluginstore.Plugin{
 					{
 						JSONData: plugins.JSONData{
 							ID:   "test-ds",
@@ -65,6 +72,7 @@ func TestPluginUpdateChecker_HasUpdate(t *testing.T) {
 					},
 				},
 			},
+			updateCheckURL: updateCheckURL,
 		}
 
 		update, exists := svc.HasUpdate(context.Background(), "test-ds")
@@ -81,12 +89,14 @@ func TestPluginUpdateChecker_HasUpdate(t *testing.T) {
 	})
 
 	t.Run("update is available but plugin is not in store", func(t *testing.T) {
+		updateCheckURL, _ := url.Parse("https://grafana.com/api/plugins/versioncheck")
+
 		svc := PluginsService{
 			availableUpdates: map[string]string{
 				"test-panel": "0.9.0",
 			},
-			pluginStore: plugins.FakePluginStore{
-				PluginList: []plugins.PluginDTO{
+			pluginStore: &pluginstore.FakePluginStore{
+				PluginList: []pluginstore.Plugin{
 					{
 						JSONData: plugins.JSONData{
 							ID:   "test-ds",
@@ -95,6 +105,7 @@ func TestPluginUpdateChecker_HasUpdate(t *testing.T) {
 					},
 				},
 			},
+			updateCheckURL: updateCheckURL,
 		}
 
 		update, exists := svc.HasUpdate(context.Background(), "test-panel")
@@ -124,51 +135,54 @@ func TestPluginUpdateChecker_checkForUpdates(t *testing.T) {
 		  }
 		]`
 
+		updateCheckURL, _ := url.Parse("https://grafana.com/api/plugins/versioncheck")
+
 		svc := PluginsService{
 			availableUpdates: map[string]string{
 				"test-app": "1.0.0",
 			},
-			pluginStore: plugins.FakePluginStore{
-				PluginList: []plugins.PluginDTO{
+			pluginStore: &pluginstore.FakePluginStore{
+				PluginList: []pluginstore.Plugin{
 					{
 						JSONData: plugins.JSONData{
 							ID:   "test-ds",
 							Info: plugins.Info{Version: "0.9.0"},
-							Type: plugins.DataSource,
+							Type: plugins.TypeDataSource,
 						},
-						Class: plugins.External,
+						Class: plugins.ClassExternal,
 					},
 					{
 						JSONData: plugins.JSONData{
 							ID:   "test-app",
 							Info: plugins.Info{Version: "0.5.0"},
-							Type: plugins.App,
+							Type: plugins.TypeApp,
 						},
-						Class: plugins.External,
+						Class: plugins.ClassExternal,
 					},
 					{
 						JSONData: plugins.JSONData{
 							ID:   "test-panel",
 							Info: plugins.Info{Version: "2.5.7"},
-							Type: plugins.Panel,
+							Type: plugins.TypePanel,
 						},
-						Class: plugins.Bundled,
+						Class: plugins.ClassExternal,
 					},
 					{
 						JSONData: plugins.JSONData{
 							ID:   "test-core-panel",
 							Info: plugins.Info{Version: "0.0.1"},
-							Type: plugins.Panel,
+							Type: plugins.TypePanel,
 						},
-						Class: plugins.Core,
+						Class: plugins.ClassCore,
 					},
 				},
 			},
 			httpClient: &fakeHTTPClient{
 				fakeResp: jsonResp,
 			},
-			log:    log.NewNopLogger(),
-			tracer: tracing.InitializeTracerForTest(),
+			log:            log.NewNopLogger(),
+			tracer:         tracing.InitializeTracerForTest(),
+			updateCheckURL: updateCheckURL,
 		}
 
 		svc.instrumentedCheckForUpdates(context.Background())

@@ -3,8 +3,12 @@ aliases:
   - ../installation/restart-grafana/
   - ./restart-grafana/
 description: How to start the Grafana server
-title: Start the Grafana server
+labels:
+  products:
+    - enterprise
+    - oss
 menuTitle: Start Grafana
+title: Start the Grafana server
 weight: 300
 ---
 
@@ -22,19 +26,18 @@ The following subsections describe three methods of starting and restarting the 
 
 ### Start the Grafana server with systemd
 
-Complete the following steps to start the Grafana server using systemd and verify that it is running:
+Complete the following steps to start the Grafana server using systemd and verify that it is running.
 
 1. To start the service, run the following commands:
 
    ```bash
    sudo systemctl daemon-reload
    sudo systemctl start grafana-server
-   sudo systemctl status grafana-server
    ```
 
 1. To verify that the service is running, run the following command:
 
-   ```
+   ```bash
    sudo systemctl status grafana-server
    ```
 
@@ -48,32 +51,33 @@ sudo systemctl enable grafana-server.service
 
 #### Serve Grafana on a port < 1024
 
-{{< docs/shared "systemd/bind-net-capabilities.md" >}}
+{{< docs/shared lookup="systemd/bind-net-capabilities.md" source="grafana" version="<GRAFANA VERSION>" >}}
 
 ### Restart the Grafana server using systemd
 
-To restart the Grafana server, run the following commands:
+To restart the Grafana server, run the following command:
 
 ```bash
 sudo systemctl restart grafana-server
 ```
 
-> **Note:** SUSE or OpenSUSE users might need to start the server with the systemd method, then use the init.d method to configure Grafana to start at boot.
+{{% admonition type="note" %}}
+SUSE or openSUSE users might need to start the server with the systemd method, then use the init.d method to configure Grafana to start at boot.
+{{% /admonition %}}
 
 ### Start the Grafana server using init.d
 
 Complete the following steps to start the Grafana server using init.d and verify that it is running:
 
-1. To start the Grafana server, run the following commands:
+1. To start the Grafana server, run the following command:
 
    ```bash
    sudo service grafana-server start
-   sudo service grafana-server status
    ```
 
 1. To verify that the service is running, run the following command:
 
-   ```
+   ```bash
    sudo service grafana-server status
    ```
 
@@ -87,7 +91,7 @@ sudo update-rc.d grafana-server defaults
 
 #### Restart the Grafana server using init.d
 
-To restart the Grafana server, run the following commands:
+To restart the Grafana server, run the following command:
 
 ```bash
 sudo service grafana-server restart
@@ -95,12 +99,12 @@ sudo service grafana-server restart
 
 ### Start the server using the binary
 
-The `grafana-server` binary .tar.gz needs the working directory to be the root install directory where the binary and the `public` folder are located.
+The `grafana` binary .tar.gz needs the working directory to be the root install directory where the binary and the `public` folder are located.
 
 To start the Grafana server, run the following command:
 
 ```bash
-./bin/grafana-server
+./bin/grafana server
 ```
 
 ## Docker
@@ -109,39 +113,47 @@ To restart the Grafana service, use the `docker restart` command.
 
 `docker restart grafana`
 
-Alternately, you can use the `docker compose restart` command to restart Grafana. For more information, refer to [docker compose documentation](https://docs.docker.com/compose/).
+Alternatively, you can use the `docker compose restart` command to restart Grafana. For more information, refer to [docker compose documentation](https://docs.docker.com/compose/).
 
 ### Docker compose example
 
 Configure your `docker-compose.yml` file. For example:
 
-```bash
-grafana:
-  image: grafana/grafana:latest
-  ports:
-    - "3000:3000"
-  environment:
-    - TERM=linux
-    - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-piechart-panel,grafana-polystat-panel
+```yml
+version: '3.8'
+services:
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - TERM=linux
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-polystat-panel
+    ports:
+      - '3000:3000'
+    volumes:
+      - 'grafana_storage:/var/lib/grafana'
+volumes:
+  grafana_storage: {}
 ```
 
 Start the Grafana server:
 
-`docker-compose up`
+`docker compose up -d`
 
-This starts the Grafana server along with the three plugins specified in the YAML file.
+This starts the Grafana server container in detached mode along with the two plugins specified in the YAML file.
 
 To restart the running container, use this command:
 
-`docker-compose restart grafana`
+`docker compose restart grafana`
 
 ## Windows
 
 Complete the following steps to start the Grafana server on Windows:
 
-1. Execute `grafana-server.exe`, which is located in the `bin` directory.
+1. Execute `grafana.exe server`; the `grafana` binary is located in the `bin` directory.
 
-   We recommend that you run `grafana-server.exe` from the command line.
+   We recommend that you run `grafana.exe server` from the command line.
 
    If you want to run Grafana as a Windows service, you can download [NSSM](https://nssm.cc/).
 
@@ -149,7 +161,7 @@ Complete the following steps to start the Grafana server on Windows:
 
    > **Note:** The default Grafana port is `3000`. This port might require extra permissions on Windows. If it does not appear in the default port, you can try changing to a different port.
 
-1. If you need to change the port, complete the following steps:
+1. To change the port, complete the following steps:
 
    a. In the `conf` directory, copy `sample.ini` to `custom.ini`.
 
@@ -167,6 +179,14 @@ To restart the Grafana server, complete the following steps:
 
 Restart methods differ depending on whether you installed Grafana using Homebrew or as standalone macOS binaries.
 
+### Start Grafana using Homebrew
+
+To start Grafana using [Homebrew](http://brew.sh/), run the following start command:
+
+```bash
+brew services start grafana
+```
+
 ### Restart Grafana using Homebrew
 
 Use the [Homebrew](http://brew.sh/) restart command:
@@ -183,12 +203,12 @@ To restart Grafana:
 1. Run the command:
 
 ```bash
-./bin/grafana-server
+./bin/grafana server
 ```
 
 ## Next steps
 
 After the Grafana server is up and running, consider taking the next steps:
 
-- Refer to [Get Started]({{< relref "../getting-started/" >}}) to learn how to build your first dashboard.
-- Refer to [Configuration]({{< relref "./configure-grafana/" >}}) to learn about how you can customize your environment.
+- Refer to [Get Started]({{< relref "../getting-started" >}}) to learn how to build your first dashboard.
+- Refer to [Configuration]({{< relref "./configure-grafana" >}}) to learn about how you can customize your environment.

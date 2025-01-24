@@ -1,10 +1,11 @@
 import { css } from '@emotion/css';
-import React, { ChangeEvent } from 'react';
+import { memo, ChangeEvent } from 'react';
 
 import { VariableSuggestion, GrafanaTheme2, DataLink } from '@grafana/data';
 
 import { useStyles2 } from '../../themes/index';
 import { isCompactUrl } from '../../utils/dataLinks';
+import { t, Trans } from '../../utils/i18n';
 import { Field } from '../Forms/Field';
 import { Input } from '../Input/Input';
 import { Switch } from '../Switch/Switch';
@@ -20,17 +21,17 @@ interface DataLinkEditorProps {
 }
 
 const getStyles = (theme: GrafanaTheme2) => ({
-  listItem: css`
-    margin-bottom: ${theme.spacing()};
-  `,
-  infoText: css`
-    padding-bottom: ${theme.spacing(2)};
-    margin-left: 66px;
-    color: ${theme.colors.text.secondary};
-  `,
+  listItem: css({
+    marginBottom: theme.spacing(),
+  }),
+  infoText: css({
+    paddingBottom: theme.spacing(2),
+    marginLeft: '66px',
+    color: theme.colors.text.secondary,
+  }),
 });
 
-export const DataLinkEditor = React.memo(({ index, value, onChange, suggestions, isLast }: DataLinkEditorProps) => {
+export const DataLinkEditor = memo(({ index, value, onChange, suggestions, isLast }: DataLinkEditorProps) => {
   const styles = useStyles2(getStyles);
 
   const onUrlChange = (url: string, callback?: () => void) => {
@@ -42,6 +43,10 @@ export const DataLinkEditor = React.memo(({ index, value, onChange, suggestions,
 
   const onOpenInNewTabChanged = () => {
     onChange(index, { ...value, targetBlank: !value.targetBlank });
+  };
+
+  const onOneClickChanged = () => {
+    onChange(index, { ...value, oneClick: !value.oneClick });
   };
 
   return (
@@ -62,10 +67,22 @@ export const DataLinkEditor = React.memo(({ index, value, onChange, suggestions,
         <Switch value={value.targetBlank || false} onChange={onOpenInNewTabChanged} />
       </Field>
 
+      <Field
+        label={t('grafana-ui.data-link-inline-editor.one-click', 'One click')}
+        description={t(
+          'grafana-ui.data-link-editor-modal.one-click-description',
+          'Only one link can have one click enabled at a time'
+        )}
+      >
+        <Switch value={value.oneClick || false} onChange={onOneClickChanged} />
+      </Field>
+
       {isLast && (
         <div className={styles.infoText}>
-          With data links you can reference data variables like series name, labels and values. Type CMD+Space,
-          CTRL+Space, or $ to open variable suggestions.
+          <Trans i18nKey="grafana-ui.data-link-editor.info">
+            With data links you can reference data variables like series name, labels and values. Type CMD+Space,
+            CTRL+Space, or $ to open variable suggestions.
+          </Trans>
         </div>
       )}
     </div>

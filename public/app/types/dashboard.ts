@@ -1,13 +1,38 @@
 import { DataQuery } from '@grafana/data';
-import { Dashboard } from '@grafana/schema';
+import { Dashboard, DataSourceRef } from '@grafana/schema';
+import { ObjectMeta } from 'app/features/apiserver/types';
 import { DashboardModel } from 'app/features/dashboard/state/DashboardModel';
-
-import { DashboardAcl } from './acl';
 
 export interface DashboardDTO {
   redirectUri?: string;
   dashboard: DashboardDataDTO;
   meta: DashboardMeta;
+}
+
+export interface ImportDashboardResponseDTO {
+  uid: string;
+  pluginId: string;
+  title: string;
+  imported: boolean;
+  importedRevision?: number;
+  importedUri: string;
+  importedUrl: string;
+  slug: string;
+  dashboardId: number;
+  folderId: number;
+  folderUid: string;
+  description: string;
+  path: string;
+  removed: boolean;
+}
+
+export interface SaveDashboardResponseDTO {
+  id: number;
+  slug: string;
+  status: string;
+  uid: string;
+  url: string;
+  version: number;
 }
 
 export interface DashboardMeta {
@@ -20,7 +45,6 @@ export interface DashboardMeta {
   canStar?: boolean;
   canAdmin?: boolean;
   url?: string;
-  folderId?: number;
   folderUid?: string;
   canMakeEditable?: boolean;
   provisioned?: boolean;
@@ -32,6 +56,7 @@ export interface DashboardMeta {
   isSnapshot?: boolean;
   folderTitle?: string;
   folderUrl?: string;
+  folderId?: number;
   created?: string;
   createdBy?: string;
   updated?: string;
@@ -40,10 +65,20 @@ export interface DashboardMeta {
   fromFile?: boolean;
   hasUnsavedFolderChange?: boolean;
   annotationsPermissions?: AnnotationsPermissions;
-  publicDashboardAccessToken?: string;
-  publicDashboardUid?: string;
   publicDashboardEnabled?: boolean;
   dashboardNotFound?: boolean;
+  isEmbedded?: boolean;
+  isNew?: boolean;
+  version?: number;
+
+  // When loaded from kubernetes, we stick the raw metadata here
+  // yes weird, but this means all the editor structures can exist unchanged
+  // until we use the resource as the main container
+  k8s?: Partial<ObjectMeta>;
+
+  // This is a property added specifically for edge cases where dashboards should be reloaded on scopes, time range or variables changes
+  // This property is not persisted in the DB but its existence is controlled by the API
+  reloadOnParamsChange?: boolean;
 }
 
 export interface AnnotationActions {
@@ -68,9 +103,10 @@ export enum DashboardRoutes {
   Home = 'home-dashboard',
   New = 'new-dashboard',
   Normal = 'normal-dashboard',
-  Path = 'path-dashboard',
   Scripted = 'scripted-dashboard',
   Public = 'public-dashboard',
+  Embedded = 'embedded-dashboard',
+  Report = 'report-dashboard',
 }
 
 export enum DashboardInitPhase {
@@ -87,7 +123,6 @@ export interface DashboardInitError {
 }
 
 export enum KioskMode {
-  TV = 'tv',
   Full = 'full',
 }
 
@@ -101,6 +136,8 @@ export interface QueriesToUpdateOnDashboardLoad {
 export interface DashboardState {
   getModel: GetMutableDashboardModelFn;
   initPhase: DashboardInitPhase;
+  initialDatasource?: DataSourceRef['uid'];
   initError: DashboardInitError | null;
-  permissions: DashboardAcl[];
 }
+
+export const DASHBOARD_FROM_LS_KEY = 'DASHBOARD_FROM_LS_KEY';

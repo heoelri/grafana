@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -19,7 +20,6 @@ func BenchmarkAlertInstanceOperations(b *testing.B) {
 	b.StopTimer()
 	ctx := context.Background()
 	_, dbstore := tests.SetupTestEnv(b, baseIntervalSeconds)
-	dbstore.FeatureToggles = featuremgmt.WithFeatures(featuremgmt.FlagAlertingBigTransactions)
 
 	const mainOrgID int64 = 1
 
@@ -48,75 +48,10 @@ func BenchmarkAlertInstanceOperations(b *testing.B) {
 
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		_ = dbstore.SaveAlertInstances(ctx, instances...)
+		for _, instance := range instances {
+			_ = dbstore.SaveAlertInstance(ctx, instance)
+		}
 		_ = dbstore.DeleteAlertInstances(ctx, keys...)
-	}
-}
-
-func TestIntegrationAlertInstanceBulkWrite(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test")
-	}
-	ctx := context.Background()
-	_, dbstore := tests.SetupTestEnv(t, baseIntervalSeconds)
-
-	orgIDs := []int64{1, 2, 3, 4, 5}
-	counts := []int{10_000, 200, 503, 0, 1256}
-	instances := make([]models.AlertInstance, 0, 10_000+200+503+0+1256)
-	keys := make([]models.AlertInstanceKey, 0, 10_000+200+503+0+1256)
-
-	for i, id := range orgIDs {
-		alertRule := tests.CreateTestAlertRule(t, ctx, dbstore, 60, id)
-
-		// Create some instances to write down and then delete.
-		for j := 0; j < counts[i]; j++ {
-			labels := models.InstanceLabels{"test": fmt.Sprint(j)}
-			_, labelsHash, _ := labels.StringAndHash()
-			instance := models.AlertInstance{
-				AlertInstanceKey: models.AlertInstanceKey{
-					RuleOrgID:  alertRule.OrgID,
-					RuleUID:    alertRule.UID,
-					LabelsHash: labelsHash,
-				},
-				CurrentState:  models.InstanceStateFiring,
-				CurrentReason: string(models.InstanceStateError),
-				Labels:        labels,
-			}
-			instances = append(instances, instance)
-			keys = append(keys, instance.AlertInstanceKey)
-		}
-	}
-
-	for _, bigStmts := range []bool{false, true} {
-		dbstore.FeatureToggles = featuremgmt.WithFeatures([]interface{}{featuremgmt.FlagAlertingBigTransactions, bigStmts})
-		t.Log("Saving")
-		err := dbstore.SaveAlertInstances(ctx, instances...)
-		require.NoError(t, err)
-		t.Log("Finished database write")
-
-		// List our instances. Make sure we have the right count.
-		for i, id := range orgIDs {
-			q := &models.ListAlertInstancesQuery{
-				RuleOrgID: id,
-			}
-			alerts, err := dbstore.ListAlertInstances(ctx, q)
-			require.NoError(t, err)
-			require.Equal(t, counts[i], len(alerts), "Org %v: Expected %v instances but got %v", id, counts[i], len(alerts))
-		}
-		t.Log("Finished database read")
-
-		err = dbstore.DeleteAlertInstances(ctx, keys...)
-		require.NoError(t, err)
-		t.Log("Finished database delete")
-
-		for _, id := range orgIDs {
-			q := &models.ListAlertInstancesQuery{
-				RuleOrgID: id,
-			}
-			alerts, err := dbstore.ListAlertInstances(ctx, q)
-			require.NoError(t, err)
-			require.Zero(t, len(alerts), "Org %v: Deleted instances but still had %v", id, len(alerts))
-		}
 	}
 }
 
@@ -164,7 +99,7 @@ func TestIntegrationAlertInstanceOperations(t *testing.T) {
 			CurrentReason: string(models.InstanceStateError),
 			Labels:        labels,
 		}
-		err := dbstore.SaveAlertInstances(ctx, instance)
+		err := dbstore.SaveAlertInstance(ctx, instance)
 		require.NoError(t, err)
 
 		listCmd := &models.ListAlertInstancesQuery{
@@ -193,7 +128,7 @@ func TestIntegrationAlertInstanceOperations(t *testing.T) {
 			CurrentState: models.InstanceStateNormal,
 			Labels:       labels,
 		}
-		err := dbstore.SaveAlertInstances(ctx, instance)
+		err := dbstore.SaveAlertInstance(ctx, instance)
 		require.NoError(t, err)
 
 		listCmd := &models.ListAlertInstancesQuery{
@@ -223,7 +158,7 @@ func TestIntegrationAlertInstanceOperations(t *testing.T) {
 			Labels:       labels,
 		}
 
-		err := dbstore.SaveAlertInstances(ctx, instance1)
+		err := dbstore.SaveAlertInstance(ctx, instance1)
 		require.NoError(t, err)
 
 		labels = models.InstanceLabels{"test": "testValue2"}
@@ -237,7 +172,7 @@ func TestIntegrationAlertInstanceOperations(t *testing.T) {
 			CurrentState: models.InstanceStateFiring,
 			Labels:       labels,
 		}
-		err = dbstore.SaveAlertInstances(ctx, instance2)
+		err = dbstore.SaveAlertInstance(ctx, instance2)
 		require.NoError(t, err)
 
 		listQuery := &models.ListAlertInstancesQuery{
@@ -284,7 +219,9 @@ func TestIntegrationAlertInstanceOperations(t *testing.T) {
 			CurrentReason: models.StateReasonError,
 			Labels:        labels,
 		}
-		err := dbstore.SaveAlertInstances(ctx, instance1, instance2)
+		err := dbstore.SaveAlertInstance(ctx, instance1)
+		require.NoError(t, err)
+		err = dbstore.SaveAlertInstance(ctx, instance2)
 		require.NoError(t, err)
 
 		listQuery := &models.ListAlertInstancesQuery{
@@ -327,7 +264,7 @@ func TestIntegrationAlertInstanceOperations(t *testing.T) {
 			Labels:       labels,
 		}
 
-		err := dbstore.SaveAlertInstances(ctx, instance1)
+		err := dbstore.SaveAlertInstance(ctx, instance1)
 		require.NoError(t, err)
 
 		instance2 := models.AlertInstance{
@@ -339,7 +276,7 @@ func TestIntegrationAlertInstanceOperations(t *testing.T) {
 			CurrentState: models.InstanceStateNormal,
 			Labels:       instance1.Labels,
 		}
-		err = dbstore.SaveAlertInstances(ctx, instance2)
+		err = dbstore.SaveAlertInstance(ctx, instance2)
 		require.NoError(t, err)
 
 		listQuery := &models.ListAlertInstancesQuery{
@@ -357,4 +294,232 @@ func TestIntegrationAlertInstanceOperations(t *testing.T) {
 		require.Equal(t, instance2.Labels, alerts[0].Labels)
 		require.Equal(t, instance2.CurrentState, alerts[0].CurrentState)
 	})
+}
+
+func TestIntegrationFullSync(t *testing.T) {
+	batchSize := 1
+
+	ctx := context.Background()
+	_, dbstore := tests.SetupTestEnv(t, baseIntervalSeconds)
+
+	orgID := int64(1)
+
+	ruleUIDs := []string{"a", "b", "c", "d"}
+
+	instances := make([]models.AlertInstance, len(ruleUIDs))
+	for i, ruleUID := range ruleUIDs {
+		instances[i] = generateTestAlertInstance(orgID, ruleUID)
+	}
+
+	t.Run("Should do a proper full sync", func(t *testing.T) {
+		err := dbstore.FullSync(ctx, instances, batchSize)
+		require.NoError(t, err)
+
+		res, err := dbstore.ListAlertInstances(ctx, &models.ListAlertInstancesQuery{
+			RuleOrgID: orgID,
+		})
+		require.NoError(t, err)
+		require.Len(t, res, len(instances))
+		for _, ruleUID := range ruleUIDs {
+			found := false
+			for _, instance := range res {
+				if instance.RuleUID == ruleUID {
+					found = true
+					continue
+				}
+			}
+			if !found {
+				t.Errorf("Instance with RuleUID '%s' not found", ruleUID)
+			}
+		}
+	})
+
+	t.Run("Should remove non existing entries on sync", func(t *testing.T) {
+		err := dbstore.FullSync(ctx, instances[1:], batchSize)
+		require.NoError(t, err)
+
+		res, err := dbstore.ListAlertInstances(ctx, &models.ListAlertInstancesQuery{
+			RuleOrgID: orgID,
+		})
+		require.NoError(t, err)
+		require.Len(t, res, len(instances)-1)
+		for _, instance := range res {
+			if instance.RuleUID == "a" {
+				t.Error("Instance with RuleUID 'a' should not be exist anymore")
+			}
+		}
+	})
+
+	t.Run("Should add new entries on sync", func(t *testing.T) {
+		newRuleUID := "y"
+		err := dbstore.FullSync(ctx, append(instances, generateTestAlertInstance(orgID, newRuleUID)), batchSize)
+		require.NoError(t, err)
+
+		res, err := dbstore.ListAlertInstances(ctx, &models.ListAlertInstancesQuery{
+			RuleOrgID: orgID,
+		})
+		require.NoError(t, err)
+		require.Len(t, res, len(instances)+1)
+		for _, ruleUID := range append(ruleUIDs, newRuleUID) {
+			found := false
+			for _, instance := range res {
+				if instance.RuleUID == ruleUID {
+					found = true
+					continue
+				}
+			}
+			if !found {
+				t.Errorf("Instance with RuleUID '%s' not found", ruleUID)
+			}
+		}
+	})
+
+	t.Run("Should save all instances when batch size is bigger than 1", func(t *testing.T) {
+		batchSize = 2
+		newRuleUID := "y"
+		err := dbstore.FullSync(ctx, append(instances, generateTestAlertInstance(orgID, newRuleUID)), batchSize)
+		require.NoError(t, err)
+
+		res, err := dbstore.ListAlertInstances(ctx, &models.ListAlertInstancesQuery{
+			RuleOrgID: orgID,
+		})
+		require.NoError(t, err)
+		require.Len(t, res, len(instances)+1)
+		for _, ruleUID := range append(ruleUIDs, newRuleUID) {
+			found := false
+			for _, instance := range res {
+				if instance.RuleUID == ruleUID {
+					found = true
+					continue
+				}
+			}
+			if !found {
+				t.Errorf("Instance with RuleUID '%s' not found", ruleUID)
+			}
+		}
+	})
+
+	t.Run("Should not fail when the instances are empty", func(t *testing.T) {
+		// First, insert some data into the table.
+		initialInstances := []models.AlertInstance{
+			generateTestAlertInstance(orgID, "preexisting-1"),
+			generateTestAlertInstance(orgID, "preexisting-2"),
+		}
+		err := dbstore.FullSync(ctx, initialInstances, 5)
+		require.NoError(t, err)
+
+		// Now call FullSync with no instances. According to the code, this should return nil
+		// and should not delete anything in the table.
+		err = dbstore.FullSync(ctx, []models.AlertInstance{}, 5)
+		require.NoError(t, err)
+
+		// Check that the previously inserted instances are still present.
+		res, err := dbstore.ListAlertInstances(ctx, &models.ListAlertInstancesQuery{
+			RuleOrgID: orgID,
+		})
+		require.NoError(t, err)
+		require.Len(t, res, 2, "Expected the preexisting instances to remain since empty sync does nothing")
+
+		found1, found2 := false, false
+		for _, r := range res {
+			if r.RuleUID == "preexisting-1" {
+				found1 = true
+			}
+			if r.RuleUID == "preexisting-2" {
+				found2 = true
+			}
+		}
+		require.True(t, found1, "Expected preexisting-1 to remain")
+		require.True(t, found2, "Expected preexisting-2 to remain")
+	})
+
+	t.Run("Should handle invalid instances by skipping them", func(t *testing.T) {
+		// Create a batch with one valid and one invalid instance
+		validInstance := generateTestAlertInstance(orgID, "valid")
+
+		invalidInstance := generateTestAlertInstance(orgID, "")
+		// Make the invalid instance actually invalid
+		invalidInstance.AlertInstanceKey.RuleUID = ""
+
+		err := dbstore.FullSync(ctx, []models.AlertInstance{validInstance, invalidInstance}, 2)
+		require.NoError(t, err)
+
+		// Only the valid instance should be saved.
+		res, err := dbstore.ListAlertInstances(ctx, &models.ListAlertInstancesQuery{
+			RuleOrgID: orgID,
+		})
+		require.NoError(t, err)
+		require.Len(t, res, 1)
+		require.Equal(t, "valid", res[0].RuleUID)
+	})
+
+	t.Run("Should handle batchSize larger than the number of instances", func(t *testing.T) {
+		// Insert a small number of instances but use a large batchSize
+		smallSet := []models.AlertInstance{
+			generateTestAlertInstance(orgID, "batch-test1"),
+			generateTestAlertInstance(orgID, "batch-test2"),
+		}
+
+		err := dbstore.FullSync(ctx, smallSet, 100)
+		require.NoError(t, err)
+
+		res, err := dbstore.ListAlertInstances(ctx, &models.ListAlertInstancesQuery{
+			RuleOrgID: orgID,
+		})
+		require.NoError(t, err)
+		require.Len(t, res, len(smallSet))
+		found1, found2 := false, false
+		for _, r := range res {
+			if r.RuleUID == "batch-test1" {
+				found1 = true
+			}
+			if r.RuleUID == "batch-test2" {
+				found2 = true
+			}
+		}
+		require.True(t, found1)
+		require.True(t, found2)
+	})
+
+	t.Run("Should handle a large set of instances with a moderate batchSize", func(t *testing.T) {
+		// Clear everything first.
+		err := dbstore.FullSync(ctx, []models.AlertInstance{}, 1)
+		require.NoError(t, err)
+
+		largeCount := 300
+		largeSet := make([]models.AlertInstance, largeCount)
+		for i := 0; i < largeCount; i++ {
+			largeSet[i] = generateTestAlertInstance(orgID, fmt.Sprintf("large-%d", i))
+		}
+
+		err = dbstore.FullSync(ctx, largeSet, 50)
+		require.NoError(t, err)
+
+		res, err := dbstore.ListAlertInstances(ctx, &models.ListAlertInstancesQuery{
+			RuleOrgID: orgID,
+		})
+		require.NoError(t, err)
+		require.Len(t, res, largeCount)
+	})
+}
+
+func generateTestAlertInstance(orgID int64, ruleID string) models.AlertInstance {
+	return models.AlertInstance{
+		AlertInstanceKey: models.AlertInstanceKey{
+			RuleOrgID:  orgID,
+			RuleUID:    ruleID,
+			LabelsHash: "abc",
+		},
+		CurrentState: models.InstanceStateFiring,
+		Labels: map[string]string{
+			"hello": "world",
+		},
+		ResultFingerprint: "abc",
+		CurrentStateEnd:   time.Now(),
+		CurrentStateSince: time.Now(),
+		LastEvalTime:      time.Now(),
+		LastSentAt:        util.Pointer(time.Now()),
+		ResolvedAt:        util.Pointer(time.Now()),
+		CurrentReason:     "abc",
+	}
 }

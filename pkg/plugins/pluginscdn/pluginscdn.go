@@ -2,6 +2,7 @@ package pluginscdn
 
 import (
 	"errors"
+	"net/url"
 	"strings"
 
 	"github.com/grafana/grafana/pkg/plugins/config"
@@ -10,19 +11,16 @@ import (
 const (
 	// cdnAssetPathTemplate is the relative path template used to locate plugin CDN assets
 	cdnAssetPathTemplate = "{id}/{version}/public/plugins/{id}/{assetPath}"
-
-	// systemJSCDNURLTemplate is a special path template used by system.js to identify plugin CDN assets
-	systemJSCDNURLTemplate = "plugin-cdn/" + cdnAssetPathTemplate
 )
 
 var ErrPluginNotCDN = errors.New("plugin is not a cdn plugin")
 
 // Service provides methods for the plugins CDN.
 type Service struct {
-	cfg *config.Cfg
+	cfg *config.PluginManagementCfg
 }
 
-func ProvideService(cfg *config.Cfg) *Service {
+func ProvideService(cfg *config.PluginManagementCfg) *Service {
 	return &Service{cfg: cfg}
 }
 
@@ -57,21 +55,6 @@ func (s *Service) BaseURL() (string, error) {
 	return s.cfg.PluginsCDNURLTemplate, nil
 }
 
-// SystemJSAssetPath returns a system-js path for the specified asset on the plugins CDN.
-// The returned path will follow the template specified in systemJSCDNURLTemplate.
-// If assetPath is an empty string, the base path for the plugin is returned.
-func (s *Service) SystemJSAssetPath(pluginID, pluginVersion, assetPath string) (string, error) {
-	u, err := URLConstructor{
-		cdnURLTemplate: systemJSCDNURLTemplate,
-		pluginID:       pluginID,
-		pluginVersion:  pluginVersion,
-	}.Path(assetPath)
-	if err != nil {
-		return "", err
-	}
-	return u.String(), nil
-}
-
 // AssetURL returns the URL of a CDN asset for a CDN plugin. If the specified plugin is not a CDN plugin,
 // it returns ErrPluginNotCDN.
 func (s *Service) AssetURL(pluginID, pluginVersion, assetPath string) (string, error) {
@@ -79,4 +62,8 @@ func (s *Service) AssetURL(pluginID, pluginVersion, assetPath string) (string, e
 		return "", ErrPluginNotCDN
 	}
 	return s.NewCDNURLConstructor(pluginID, pluginVersion).StringPath(assetPath)
+}
+
+func JoinPath(base string, assetPath ...string) (string, error) {
+	return url.JoinPath(base, assetPath...)
 }

@@ -9,14 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/stretchr/testify/require"
 
+	"github.com/grafana/grafana-plugin-sdk-go/data"
+
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/services/ngalert/eval"
 	"github.com/grafana/grafana/pkg/services/ngalert/eval/eval_mocks"
 	"github.com/grafana/grafana/pkg/services/ngalert/models"
 	"github.com/grafana/grafana/pkg/services/ngalert/state"
-	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/util"
 )
 
@@ -144,7 +145,7 @@ func TestNewBacktestingEvaluator(t *testing.T) {
 
 		for _, testCase := range testCases {
 			t.Run(testCase.name, func(t *testing.T) {
-				e, err := newBacktestingEvaluator(context.Background(), evalFactory, nil, testCase.condition)
+				e, err := newBacktestingEvaluator(context.Background(), evalFactory, nil, testCase.condition, nil)
 				if testCase.error {
 					require.Error(t, err)
 					return
@@ -159,9 +160,10 @@ func TestNewBacktestingEvaluator(t *testing.T) {
 func TestEvaluatorTest(t *testing.T) {
 	states := []eval.State{eval.Normal, eval.Alerting, eval.Pending}
 	generateState := func(prefix string) *state.State {
+		labels := models.GenerateAlertLabels(rand.Intn(5)+1, prefix+"-")
 		return &state.State{
-			CacheID: "state-" + prefix,
-			Labels:  models.GenerateAlertLabels(rand.Intn(5)+1, prefix+"-"),
+			CacheID: labels.Fingerprint(),
+			Labels:  labels,
 			State:   states[rand.Intn(len(states))],
 		}
 	}
@@ -174,7 +176,7 @@ func TestEvaluatorTest(t *testing.T) {
 	}
 	manager := &fakeStateManager{}
 
-	backtestingEvaluatorFactory = func(ctx context.Context, evalFactory eval.EvaluatorFactory, user *user.SignedInUser, condition models.Condition) (backtestingEvaluator, error) {
+	backtestingEvaluatorFactory = func(ctx context.Context, evalFactory eval.EvaluatorFactory, user identity.Requester, condition models.Condition, r eval.AlertingResultsReader) (backtestingEvaluator, error) {
 		return evaluator, nil
 	}
 
@@ -188,7 +190,8 @@ func TestEvaluatorTest(t *testing.T) {
 			return manager
 		},
 	}
-	rule := models.AlertRuleGen(models.WithInterval(time.Second))()
+	gen := models.RuleGen
+	rule := gen.With(gen.WithInterval(time.Second)).GenerateRef()
 	ruleInterval := time.Duration(rule.IntervalSeconds) * time.Second
 
 	t.Run("should return data frame in specific format", func(t *testing.T) {
@@ -199,10 +202,11 @@ func TestEvaluatorTest(t *testing.T) {
 		var states []state.StateTransition
 
 		for _, s := range allStates {
+			labels := models.GenerateAlertLabels(rand.Intn(5)+1, s.String()+"-")
 			states = append(states, state.StateTransition{
 				State: &state.State{
-					CacheID:     "state-" + s.String(),
-					Labels:      models.GenerateAlertLabels(rand.Intn(5)+1, s.String()+"-"),
+					CacheID:     labels.Fingerprint(),
+					Labels:      labels,
 					State:       s,
 					StateReason: util.GenerateShortUID(),
 				},
@@ -224,7 +228,7 @@ func TestEvaluatorTest(t *testing.T) {
 			require.Equal(t, data.FieldTypeTime, timestampField.Type())
 		})
 
-		fieldByState := make(map[string]*data.Field, len(states))
+		fieldByState := make(map[data.Fingerprint]*data.Field, len(states))
 
 		t.Run("should contain a field per state", func(t *testing.T) {
 			for _, s := range states {
@@ -261,6 +265,37 @@ func TestEvaluatorTest(t *testing.T) {
 				}
 			}
 		})
+	})
+
+	t.Run("should not fail if 'to-from' is not times of interval", func(t *testing.T) {
+		from := time.Unix(0, 0)
+		to := from.Add(5 * ruleInterval)
+
+		labels := models.GenerateAlertLabels(rand.Intn(5)+1, "test-")
+		states := []state.StateTransition{
+			{
+				State: &state.State{
+					CacheID:     labels.Fingerprint(),
+					Labels:      labels,
+					State:       eval.Normal,
+					StateReason: util.GenerateShortUID(),
+				},
+			},
+		}
+
+		manager.stateCallback = func(now time.Time) []state.StateTransition {
+			return states
+		}
+
+		frame, err := engine.Test(context.Background(), nil, rule, from, to)
+		require.NoError(t, err)
+		expectedLen := frame.Rows()
+		for i := 0; i < 100; i++ {
+			jitter := time.Duration(rand.Int63n(ruleInterval.Milliseconds())) * time.Millisecond
+			frame, err = engine.Test(context.Background(), nil, rule, from, to.Add(jitter))
+			require.NoError(t, err)
+			require.Equalf(t, expectedLen, frame.Rows(), "jitter %v caused result to be different that base-line", jitter)
+		}
 	})
 
 	t.Run("should backfill field with nulls if a new dimension created in the middle", func(t *testing.T) {
@@ -334,7 +369,7 @@ func TestEvaluatorTest(t *testing.T) {
 			})
 		})
 
-		t.Run("when evalution fails", func(t *testing.T) {
+		t.Run("when evaluation fails", func(t *testing.T) {
 			expectedError := errors.New("test-error")
 			evaluator.evalCallback = func(now time.Time) (eval.Results, error) {
 				return nil, expectedError
@@ -351,26 +386,28 @@ type fakeStateManager struct {
 	stateCallback func(now time.Time) []state.StateTransition
 }
 
-func (f *fakeStateManager) ProcessEvalResults(_ context.Context, evaluatedAt time.Time, _ *models.AlertRule, _ eval.Results, _ data.Labels) []state.StateTransition {
+func (f *fakeStateManager) ProcessEvalResults(_ context.Context, evaluatedAt time.Time, _ *models.AlertRule, _ eval.Results, _ data.Labels, _ state.Sender) state.StateTransitions {
 	return f.stateCallback(evaluatedAt)
+}
+
+func (f *fakeStateManager) GetStatesForRuleUID(orgID int64, alertRuleUID string) []*state.State {
+	return nil
 }
 
 type fakeBacktestingEvaluator struct {
 	evalCallback func(now time.Time) (eval.Results, error)
 }
 
-func (f *fakeBacktestingEvaluator) Eval(_ context.Context, from, to time.Time, interval time.Duration, callback callbackFunc) error {
-	idx := 0
-	for now := from; now.Before(to); now = now.Add(interval) {
+func (f *fakeBacktestingEvaluator) Eval(_ context.Context, from time.Time, interval time.Duration, evaluations int, callback callbackFunc) error {
+	for idx, now := 0, from; idx < evaluations; idx, now = idx+1, now.Add(interval) {
 		results, err := f.evalCallback(now)
 		if err != nil {
 			return err
 		}
-		err = callback(now, results)
+		err = callback(idx, now, results)
 		if err != nil {
 			return err
 		}
-		idx++
 	}
 	return nil
 }

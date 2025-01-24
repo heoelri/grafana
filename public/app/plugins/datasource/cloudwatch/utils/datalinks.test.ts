@@ -40,6 +40,7 @@ describe('addDataLinksToLogsResponse', () => {
           region: 'us-east-1',
         },
       ],
+      range: { ...time, raw: time },
     } as DataQueryRequest<CloudWatchQuery>;
 
     setDataSourceSrv({
@@ -53,9 +54,8 @@ describe('addDataLinksToLogsResponse', () => {
     await addDataLinksToLogsResponse(
       mockResponse,
       mockOptions,
-      { ...time, raw: time },
       (s) => s ?? '',
-      (v) => [v] ?? [],
+      (v) => [v],
       (r) => r,
       'xrayUid'
     );
@@ -125,14 +125,14 @@ describe('addDataLinksToLogsResponse', () => {
           region: 'us-east-1',
         } as CloudWatchQuery,
       ],
+      range: { ...time, raw: time },
     } as DataQueryRequest<CloudWatchQuery>;
 
     await addDataLinksToLogsResponse(
       mockResponse,
       mockOptions,
-      { ...time, raw: time },
       (s) => s ?? '',
-      (v) => [v] ?? [],
+      (v) => [v],
       (r) => r
     );
     expect(mockResponse).toMatchObject({
@@ -182,14 +182,14 @@ describe('addDataLinksToLogsResponse', () => {
           region: 'us-east-1',
         } as CloudWatchQuery,
       ],
+      range: { ...time, raw: time },
     } as DataQueryRequest<CloudWatchQuery>;
 
     await addDataLinksToLogsResponse(
       mockResponse,
       mockOptions,
-      { ...time, raw: time },
       (s) => s ?? '',
-      (v) => [v] ?? [],
+      (v) => [v],
       (r) => r
     );
     expect(mockResponse).toMatchObject({

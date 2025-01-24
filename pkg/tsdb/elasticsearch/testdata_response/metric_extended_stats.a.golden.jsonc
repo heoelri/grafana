@@ -69,8 +69,7 @@
             "typeInfo": {
               "frame": "float64",
               "nullable": true
-            },
-            "labels": {}
+            }
           }
         ]
       },
@@ -113,8 +112,7 @@
             "typeInfo": {
               "frame": "float64",
               "nullable": true
-            },
-            "labels": {}
+            }
           }
         ]
       },

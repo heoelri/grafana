@@ -1,6 +1,6 @@
 import { css } from '@emotion/css';
 import { cloneDeep } from 'lodash';
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useWindowSize } from 'react-use';
 import { VariableSizeList as List } from 'react-window';
 
@@ -8,13 +8,12 @@ import { DataFrame, Field as DataFrameField } from '@grafana/data/';
 import { reportInteraction } from '@grafana/runtime/src';
 import { Field, Switch } from '@grafana/ui/';
 
+import { ItemLabels } from './ItemLabels';
+import RawListItem from './RawListItem';
 import {
   getRawPrometheusListItemsFromDataFrame,
   RawPrometheusListItemEmptyValue,
-} from '../utils/getRawPrometheusListItemsFromDataFrame';
-
-import { ItemLabels } from './ItemLabels';
-import RawListItem from './RawListItem';
+} from './utils/getRawPrometheusListItemsFromDataFrame';
 
 export type instantQueryRawVirtualizedListData = { Value: string; __name__: string; [index: string]: string };
 
@@ -23,33 +22,33 @@ export interface RawListContainerProps {
 }
 
 const styles = {
-  wrapper: css`
-    height: 100%;
-    overflow: scroll;
-  `,
-  switchWrapper: css`
-    display: flex;
-    flex-direction: row;
-    margin-bottom: 0;
-  `,
-  switchLabel: css`
-    margin-left: 15px;
-    margin-bottom: 0;
-  `,
-  switch: css`
-    margin-left: 10px;
-  `,
-  resultCount: css`
-    margin-bottom: 4px;
-  `,
-  header: css`
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 10px 0;
-    font-size: 12px;
-    line-height: 1.25;
-  `,
+  wrapper: css({
+    height: '100%',
+    overflow: 'scroll',
+  }),
+  switchWrapper: css({
+    display: 'flex',
+    flexDirection: 'row',
+    marginBottom: 0,
+  }),
+  switchLabel: css({
+    marginLeft: '15px',
+    marginBottom: 0,
+  }),
+  switch: css({
+    marginLeft: '10px',
+  }),
+  resultCount: css({
+    marginBottom: '4px',
+  }),
+  header: css({
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '10px 0',
+    fontSize: '12px',
+    lineHeight: 1.25,
+  }),
 };
 
 const mobileWidthThreshold = 480;
@@ -113,12 +112,14 @@ const RawListContainer = (props: RawListContainerProps) => {
     return 1.5 * singleLineHeight + (Object.keys(item).length - valueLabels.length) * additionalLineHeight;
   };
 
+  const switchId = `isExpandedView ${useId()}`;
+
   return (
     <section>
       <header className={styles.header}>
         <Field className={styles.switchWrapper} label={`Expand results`} htmlFor={'isExpandedView'}>
           <div className={styles.switch}>
-            <Switch onChange={onContentClick} id="isExpandedView" value={isExpandedView} label={`Expand results`} />
+            <Switch onChange={onContentClick} id={switchId} value={isExpandedView} label={`Expand results`} />
           </div>
         </Field>
 

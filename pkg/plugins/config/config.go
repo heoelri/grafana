@@ -1,87 +1,59 @@
 package config
 
 import (
-	"strings"
-
-	"github.com/grafana/grafana-azure-sdk-go/azsettings"
-
-	"github.com/grafana/grafana/pkg/plugins/log"
 	"github.com/grafana/grafana/pkg/setting"
 )
 
-type Cfg struct {
-	log log.Logger
-
+// PluginManagementCfg is the configuration for the plugin management system.
+// It includes settings which are used to configure different components of plugin management.
+type PluginManagementCfg struct {
 	DevMode bool
 
 	PluginsPath string
 
 	PluginSettings       setting.PluginSettings
 	PluginsAllowUnsigned []string
-
-	// AWS Plugin Auth
-	AWSAllowedAuthProviders []string
-	AWSAssumeRoleEnabled    bool
-
-	// Azure Cloud settings
-	Azure *azsettings.AzureSettings
-
-	BuildVersion string // TODO Remove
-
-	LogDatasourceRequests bool
+	DisablePlugins       []string
+	ForwardHostEnvVars   []string
 
 	PluginsCDNURLTemplate string
+
+	GrafanaComAPIURL   string
+	GrafanaComAPIToken string
+
+	GrafanaAppURL string
+
+	Features Features
+
+	AngularSupportEnabled  bool
+	HideAngularDeprecation []string
 }
 
-func ProvideConfig(settingProvider setting.Provider, grafanaCfg *setting.Cfg) *Cfg {
-	return NewCfg(settingProvider, grafanaCfg)
+// Features contains the feature toggles used for the plugin management system.
+type Features struct {
+	ExternalCorePluginsEnabled bool
+	SkipHostEnvVarsEnabled     bool
+	SriChecksEnabled           bool
 }
 
-func NewCfg(settingProvider setting.Provider, grafanaCfg *setting.Cfg) *Cfg {
-	logger := log.New("plugin.cfg")
-
-	aws := settingProvider.Section("aws")
-	plugins := settingProvider.Section("plugins")
-
-	allowedUnsigned := grafanaCfg.PluginsAllowUnsigned
-	if len(plugins.KeyValue("allow_loading_unsigned_plugins").Value()) > 0 {
-		allowedUnsigned = strings.Split(plugins.KeyValue("allow_loading_unsigned_plugins").Value(), ",")
+// NewPluginManagementCfg returns a new PluginManagementCfg.
+func NewPluginManagementCfg(devMode bool, pluginsPath string, pluginSettings setting.PluginSettings, pluginsAllowUnsigned []string,
+	pluginsCDNURLTemplate string, appURL string, features Features, angularSupportEnabled bool,
+	grafanaComAPIURL string, disablePlugins []string, hideAngularDeprecation []string, forwardHostEnvVars []string, grafanaComAPIToken string,
+) *PluginManagementCfg {
+	return &PluginManagementCfg{
+		PluginsPath:            pluginsPath,
+		DevMode:                devMode,
+		PluginSettings:         pluginSettings,
+		PluginsAllowUnsigned:   pluginsAllowUnsigned,
+		DisablePlugins:         disablePlugins,
+		PluginsCDNURLTemplate:  pluginsCDNURLTemplate,
+		GrafanaComAPIURL:       grafanaComAPIURL,
+		GrafanaAppURL:          appURL,
+		Features:               features,
+		AngularSupportEnabled:  angularSupportEnabled,
+		HideAngularDeprecation: hideAngularDeprecation,
+		ForwardHostEnvVars:     forwardHostEnvVars,
+		GrafanaComAPIToken:     grafanaComAPIToken,
 	}
-
-	allowedAuth := grafanaCfg.AWSAllowedAuthProviders
-	if len(aws.KeyValue("allowed_auth_providers").Value()) > 0 {
-		allowedUnsigned = strings.Split(settingProvider.KeyValue("plugins", "allow_loading_unsigned_plugins").Value(), ",")
-	}
-
-	return &Cfg{
-		log:                     logger,
-		PluginsPath:             grafanaCfg.PluginsPath,
-		BuildVersion:            grafanaCfg.BuildVersion,
-		DevMode:                 settingProvider.KeyValue("", "app_mode").MustBool(grafanaCfg.Env == setting.Dev),
-		PluginSettings:          extractPluginSettings(settingProvider),
-		PluginsAllowUnsigned:    allowedUnsigned,
-		AWSAllowedAuthProviders: allowedAuth,
-		AWSAssumeRoleEnabled:    aws.KeyValue("assume_role_enabled").MustBool(grafanaCfg.AWSAssumeRoleEnabled),
-		Azure:                   grafanaCfg.Azure,
-		LogDatasourceRequests:   grafanaCfg.PluginLogBackendRequests,
-		PluginsCDNURLTemplate:   grafanaCfg.PluginsCDNURLTemplate,
-	}
-}
-
-func extractPluginSettings(settingProvider setting.Provider) setting.PluginSettings {
-	ps := setting.PluginSettings{}
-	for sectionName, sectionCopy := range settingProvider.Current() {
-		if !strings.HasPrefix(sectionName, "plugin.") {
-			continue
-		}
-		// Calling Current() returns a redacted version of section. We need to replace the map values with the unredacted values.
-		section := settingProvider.Section(sectionName)
-		for k := range sectionCopy {
-			sectionCopy[k] = section.KeyValue(k).MustString("")
-		}
-		pluginID := strings.Replace(sectionName, "plugin.", "", 1)
-		ps[pluginID] = sectionCopy
-	}
-
-	return ps
 }

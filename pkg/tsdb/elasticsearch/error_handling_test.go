@@ -1,8 +1,10 @@
 package elasticsearch
 
 import (
+	"errors"
 	"testing"
 
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,7 +43,8 @@ func TestErrorAvgMissingField(t *testing.T) {
 	require.NoError(t, err)
 
 	// FIXME: we should return the received error message
-	require.Len(t, result.response.Responses, 0)
+	require.Equal(t, "unexpected status code: 400", result.response.Responses["A"].Error.Error())
+	require.Equal(t, backend.ErrorSourceDownstream, result.response.Responses["A"].ErrorSource)
 }
 
 func TestErrorAvgMissingFieldNoDetailedErrors(t *testing.T) {
@@ -69,7 +72,7 @@ func TestErrorAvgMissingFieldNoDetailedErrors(t *testing.T) {
 	require.NoError(t, err)
 
 	// FIXME: we should return the received error message
-	require.Len(t, result.response.Responses, 0)
+	require.Equal(t, "unexpected status code: 400", result.response.Responses["A"].Error.Error())
 }
 
 func TestErrorTooManyDateHistogramBuckets(t *testing.T) {
@@ -117,6 +120,10 @@ func TestErrorTooManyDateHistogramBuckets(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, dataResponse.Frames, 0)
 	require.ErrorContains(t, dataResponse.Error, "Trying to create too many buckets. Must be less than or equal to: [65536].")
+	var sourceErr backend.ErrorWithSource
+	ok = errors.As(dataResponse.Error, &sourceErr)
+	require.True(t, ok)
+	require.Equal(t, sourceErr.ErrorSource().String(), "downstream")
 }
 
 func TestNonElasticError(t *testing.T) {
@@ -139,11 +146,12 @@ func TestNonElasticError(t *testing.T) {
 	// to access the database for some reason.
 	response := []byte(`Access to the database is forbidden`)
 
-	_, err := queryDataTestWithResponseCode(query, 403, response)
+	res, err := queryDataTestWithResponseCode(query, 403, response)
 	// FIXME: we should return something better.
 	// currently it returns the error-message about being unable to decode JSON
 	// it is not 100% clear what we should return to the browser
 	// (and what to debug-log for example), we could return
 	// at least something like "unknown response, http status code 403"
-	require.ErrorContains(t, err, "invalid character")
+	require.NoError(t, err)
+	require.Contains(t, res.response.Responses["A"].Error.Error(), "invalid character")
 }

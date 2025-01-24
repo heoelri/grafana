@@ -1,4 +1,4 @@
-import React from 'react';
+import * as React from 'react';
 import {
   ActionMeta as SelectActionMeta,
   CommonProps as ReactSelectCommonProps,
@@ -15,14 +15,23 @@ export type InputActionMeta = {
 };
 export type LoadOptionsCallback<T> = (options: Array<SelectableValue<T>>) => void;
 
+export enum ToggleAllState {
+  allSelected = 'allSelected',
+  indeterminate = 'indeterminate',
+  noneSelected = 'noneSelected',
+}
+
 export interface SelectCommonProps<T> {
   /** Aria label applied to the input field */
   ['aria-label']?: string;
+  ['data-testid']?: string;
   allowCreateWhileLoading?: boolean;
   allowCustomValue?: boolean;
   /** Focus is set to the Select when rendered*/
   autoFocus?: boolean;
   backspaceRemovesValue?: boolean;
+  blurInputOnSelect?: boolean;
+  captureMenuScroll?: boolean;
   className?: string;
   closeMenuOnSelect?: boolean;
   /** Used for custom components. For more information, see `react-select` */
@@ -34,9 +43,10 @@ export interface SelectCommonProps<T> {
   filterOption?: (option: SelectableValue<T>, searchQuery: string) => boolean;
   formatOptionLabel?: (item: SelectableValue<T>, formatOptionMeta: FormatOptionLabelMeta<T>) => React.ReactNode;
   /** Function for formatting the text that is displayed when creating a new value*/
-  formatCreateLabel?: (input: string) => string;
+  formatCreateLabel?: (input: string) => React.ReactNode;
   getOptionLabel?: (item: SelectableValue<T>) => React.ReactNode;
-  getOptionValue?: (item: SelectableValue<T>) => string;
+  getOptionValue?: (item: SelectableValue<T>) => T | undefined;
+  hideSelectedOptions?: boolean;
   inputValue?: string;
   invalid?: boolean;
   isClearable?: boolean;
@@ -68,8 +78,20 @@ export interface SelectCommonProps<T> {
   onCreateOption?: (value: string) => void;
   onInputChange?: (value: string, actionMeta: InputActionMeta) => void;
   onKeyDown?: (event: React.KeyboardEvent) => void;
+  /** Callback which fires when the user scrolls to the bottom of the menu */
+  onMenuScrollToBottom?: (event: WheelEvent | TouchEvent) => void;
+  /** Callback which fires when the user scrolls to the top of the menu */
+  onMenuScrollToTop?: (event: WheelEvent | TouchEvent) => void;
   onOpenMenu?: () => void;
   onFocus?: () => void;
+  toggleAllOptions?: {
+    enabled: boolean;
+    optionsFilter?: (v: SelectableValue<T>) => boolean;
+    determineToggleAllState?: (
+      selectedValues: Array<SelectableValue<T>>,
+      options: Array<SelectableValue<T>>
+    ) => ToggleAllState;
+  };
   openMenuOnFocus?: boolean;
   options?: Array<SelectableValue<T>>;
   placeholder?: string;
@@ -83,7 +105,7 @@ export interface SelectCommonProps<T> {
   virtualized?: boolean;
   /** Sets the width to a multiple of 8px. Should only be used with inline forms. Setting width of the container is preferred in other cases.*/
   width?: number | 'auto';
-  isOptionDisabled?: () => boolean;
+  isOptionDisabled?: (option: SelectableValue<T>) => boolean;
   /** allowCustomValue must be enabled. Determines whether the "create new" option should be displayed based on the current input value, select value and options array. */
   isValidNewOption?: (
     inputValue: string,
@@ -92,6 +114,8 @@ export interface SelectCommonProps<T> {
   ) => boolean;
   /** Message to display isLoading=true*/
   loadingMessage?: string;
+  /** Disables wrapping of multi value values when closed */
+  noMultiValueWrap?: boolean;
 }
 
 export interface SelectAsyncProps<T> {

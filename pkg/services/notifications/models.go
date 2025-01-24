@@ -1,6 +1,7 @@
 package notifications
 
 import (
+	"crypto/tls"
 	"errors"
 
 	"github.com/grafana/grafana/pkg/services/user"
@@ -21,7 +22,7 @@ type SendEmailCommand struct {
 	SingleEmail   bool
 	Template      string
 	Subject       string
-	Data          map[string]interface{}
+	Data          map[string]any
 	Info          string
 	ReplyTo       []string
 	EmbeddedFiles []string
@@ -42,6 +43,7 @@ type SendWebhookSync struct {
 	HttpHeader  map[string]string
 	ContentType string
 	Validation  func(body []byte, statusCode int) error
+	TLSConfig   *tls.Config
 }
 
 type SendResetPasswordEmailCommand struct {
@@ -50,4 +52,10 @@ type SendResetPasswordEmailCommand struct {
 
 type ValidateResetPasswordCodeQuery struct {
 	Code string
+}
+
+type SendVerifyEmailCommand struct {
+	User  *user.User
+	Code  string
+	Email string
 }
