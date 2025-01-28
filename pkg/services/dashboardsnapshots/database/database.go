@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
+	claims "github.com/grafana/authlib/types"
 	"github.com/grafana/grafana/pkg/components/simplejson"
 	"github.com/grafana/grafana/pkg/infra/db"
-	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/services/dashboardsnapshots"
 	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/setting"
@@ -14,27 +14,25 @@ import (
 
 type DashboardSnapshotStore struct {
 	store db.DB
-	log   log.Logger
-	cfg   *setting.Cfg
 }
 
 // DashboardStore implements the Store interface
 var _ dashboardsnapshots.Store = (*DashboardSnapshotStore)(nil)
 
 func ProvideStore(db db.DB, cfg *setting.Cfg) *DashboardSnapshotStore {
-	return &DashboardSnapshotStore{store: db, log: log.New("dashboardsnapshot.store"), cfg: cfg}
+	// nolint:staticcheck
+	return NewStore(db)
+}
+
+func NewStore(db db.DB) *DashboardSnapshotStore {
+	return &DashboardSnapshotStore{store: db}
 }
 
 // DeleteExpiredSnapshots removes snapshots with old expiry dates.
 // SnapShotRemoveExpired is deprecated and should be removed in the future.
 // Snapshot expiry is decided by the user when they share the snapshot.
 func (d *DashboardSnapshotStore) DeleteExpiredSnapshots(ctx context.Context, cmd *dashboardsnapshots.DeleteExpiredSnapshotsCommand) error {
-	return d.store.WithTransactionalDbSession(ctx, func(sess *db.Session) error {
-		if !d.cfg.SnapShotRemoveExpired {
-			d.log.Warn("[Deprecated] The snapshot_remove_expired setting is outdated. Please remove from your config.")
-			return nil
-		}
-
+	return d.store.WithDbSession(ctx, func(sess *db.Session) error {
 		deleteExpiredSQL := "DELETE FROM dashboard_snapshot WHERE expires < ?"
 		expiredResponse, err := sess.Exec(deleteExpiredSQL, time.Now())
 		if err != nil {
@@ -48,7 +46,7 @@ func (d *DashboardSnapshotStore) DeleteExpiredSnapshots(ctx context.Context, cmd
 
 func (d *DashboardSnapshotStore) CreateDashboardSnapshot(ctx context.Context, cmd *dashboardsnapshots.CreateDashboardSnapshotCommand) (*dashboardsnapshots.DashboardSnapshot, error) {
 	var result *dashboardsnapshots.DashboardSnapshot
-	err := d.store.WithTransactionalDbSession(ctx, func(sess *db.Session) error {
+	err := d.store.WithDbSession(ctx, func(sess *db.Session) error {
 		var expires = time.Now().Add(time.Hour * 24 * 365 * 50)
 		if cmd.Expires > 0 {
 			expires = time.Now().Add(time.Second * time.Duration(cmd.Expires))
@@ -81,7 +79,7 @@ func (d *DashboardSnapshotStore) CreateDashboardSnapshot(ctx context.Context, cm
 }
 
 func (d *DashboardSnapshotStore) DeleteDashboardSnapshot(ctx context.Context, cmd *dashboardsnapshots.DeleteDashboardSnapshotCommand) error {
-	return d.store.WithTransactionalDbSession(ctx, func(sess *db.Session) error {
+	return d.store.WithDbSession(ctx, func(sess *db.Session) error {
 		var rawSQL = "DELETE FROM dashboard_snapshot WHERE delete_key=?"
 		_, err := sess.Exec(rawSQL, cmd.DeleteKey)
 		return err
@@ -124,12 +122,21 @@ func (d *DashboardSnapshotStore) SearchDashboardSnapshots(ctx context.Context, q
 			sess.Where("name LIKE ?", query.Name)
 		}
 
+		var userID int64
+		if query.SignedInUser.IsIdentityType(claims.TypeUser, claims.TypeServiceAccount) {
+			var err error
+			userID, err = query.SignedInUser.GetInternalID()
+			if err != nil {
+				return err
+			}
+		}
+
 		// admins can see all snapshots, everyone else can only see their own snapshots
 		switch {
-		case query.SignedInUser.OrgRole == org.RoleAdmin:
-			sess.Where("org_id = ?", query.OrgID)
-		case !query.SignedInUser.IsAnonymous:
-			sess.Where("org_id = ? AND user_id = ?", query.OrgID, query.SignedInUser.UserID)
+		case query.SignedInUser.GetOrgRole() == org.RoleAdmin:
+			sess.Where("org_id = ?", query.SignedInUser.GetOrgID())
+		case userID != 0:
+			sess.Where("org_id = ? AND user_id = ?", query.OrgID, userID)
 		default:
 			queryResult = snapshots
 			return nil

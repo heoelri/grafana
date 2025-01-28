@@ -9,11 +9,11 @@ import { EchoEvent, EchoEventType } from '../services/EchoSrv';
  * @public
  */
 export interface DashboardInfo {
+  /** @deprecated -- use UID not internal ID */
   dashboardId: number;
   dashboardUid: string;
   dashboardName: string;
   folderName?: string;
-  publicDashboardUid?: string;
 }
 
 /**
@@ -28,6 +28,7 @@ export interface DataRequestInfo extends Partial<DashboardInfo> {
   datasourceUid: string;
   datasourceType: string;
   panelId?: number;
+  panelPluginId?: string;
   panelName?: string;
   duration: number;
   error?: string;

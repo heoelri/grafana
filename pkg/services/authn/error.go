@@ -1,10 +1,11 @@
 package authn
 
-import "github.com/grafana/grafana/pkg/util/errutil"
+import "github.com/grafana/grafana/pkg/apimachinery/errutil"
 
 var (
-	ErrTokenNeedsRotation  = errutil.NewBase(errutil.StatusUnauthorized, "session.token.rotate")
-	ErrUnsupportedClient   = errutil.NewBase(errutil.StatusBadRequest, "auth.client.unsupported")
-	ErrClientNotConfigured = errutil.NewBase(errutil.StatusBadRequest, "auth.client.notConfigured")
-	ErrUnsupportedIdentity = errutil.NewBase(errutil.StatusNotImplemented, "auth.identity.unsupported")
+	ErrTokenNeedsRotation  = errutil.Unauthorized("session.token.rotate", errutil.WithLogLevel(errutil.LevelDebug))
+	ErrUnsupportedClient   = errutil.BadRequest("auth.client.unsupported")
+	ErrClientNotConfigured = errutil.BadRequest("auth.client.notConfigured")
+	ErrUnsupportedIdentity = errutil.NotImplemented("auth.identity.unsupported")
+	ErrExpiredAccessToken  = errutil.Unauthorized("oauth.expired-token", errutil.WithPublicMessage("OAuth access token expired"))
 )

@@ -52,7 +52,7 @@ func LoadStorageConfig(cfg *setting.Cfg, features featuremgmt.FeatureToggles) (*
 	}
 
 	// Save a template version in config
-	if changed && setting.Env != setting.Prod {
+	if changed && cfg.Env != setting.Prod {
 		return g, g.save()
 	}
 	return g, nil
@@ -126,13 +126,11 @@ type StorageGCSConfig struct {
 	CredentialsFile string `json:"credentialsFile"`
 }
 
-func newStorage(cfg RootStorageConfig, localWorkCache string) (storageRuntime, error) {
+func newStorage(cfg RootStorageConfig, _ string) (storageRuntime, error) {
 	switch cfg.Type {
 	case rootStorageTypeDisk:
 		return newDiskStorage(RootStorageMeta{}, cfg), nil
-	case rootStorageTypeGit:
-		return newGitStorage(RootStorageMeta{}, cfg, localWorkCache), nil
 	}
 
-	return nil, fmt.Errorf("unsupported store: " + cfg.Type)
+	return nil, fmt.Errorf("unsupported store: %s", cfg.Type)
 }

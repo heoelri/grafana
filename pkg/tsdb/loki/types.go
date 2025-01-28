@@ -3,6 +3,7 @@ package loki
 import (
 	"time"
 
+	"github.com/grafana/grafana/pkg/promlib/models"
 	"github.com/grafana/grafana/pkg/tsdb/loki/kinds/dataquery"
 )
 
@@ -16,10 +17,11 @@ const (
 )
 
 const (
-	SupportingQueryLogsVolume                     = dataquery.SupportingQueryTypeLogsVolume
-	SupportingQueryLogsSample                     = dataquery.SupportingQueryTypeLogsSample
-	SupportingQueryDataSample                     = dataquery.SupportingQueryTypeDataSample
-	SupportingQueryNone       SupportingQueryType = "none"
+	SupportingQueryLogsVolume                         = dataquery.SupportingQueryTypeLogsVolume
+	SupportingQueryLogsSample                         = dataquery.SupportingQueryTypeLogsSample
+	SupportingQueryDataSample                         = dataquery.SupportingQueryTypeDataSample
+	SupportingQueryInfiniteScroll                     = dataquery.SupportingQueryTypeInfiniteScroll
+	SupportingQueryNone           SupportingQueryType = "none"
 )
 
 const (
@@ -38,4 +40,5 @@ type lokiQuery struct {
 	End                 time.Time
 	RefID               string
 	SupportingQueryType SupportingQueryType
+	Scopes              []models.ScopeFilter
 }

@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/infra/log"
-	"github.com/grafana/grafana/pkg/models/roletype"
 	"github.com/grafana/grafana/pkg/plugins"
 	ac "github.com/grafana/grafana/pkg/services/accesscontrol"
 	"github.com/grafana/grafana/pkg/services/accesscontrol/acimpl"
@@ -18,6 +18,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/navtree"
 	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginaccesscontrol"
 	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginsettings"
+	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginstore"
 	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/web"
@@ -33,11 +34,11 @@ func TestAddAppLinks(t *testing.T) {
 		{Action: datasources.ActionRead, Scope: "*"},
 	}
 
-	testApp1 := plugins.PluginDTO{
+	testApp1 := pluginstore.Plugin{
 		JSONData: plugins.JSONData{
 			ID:   "test-app1",
 			Name: "Test app1 name",
-			Type: plugins.App,
+			Type: plugins.TypeApp,
 			Includes: []*plugins.Includes{
 				{
 					Name:       "Catalog",
@@ -56,11 +57,11 @@ func TestAddAppLinks(t *testing.T) {
 		},
 	}
 
-	testApp2 := plugins.PluginDTO{
+	testApp2 := pluginstore.Plugin{
 		JSONData: plugins.JSONData{
 			ID:   "test-app2",
 			Name: "Test app2 name",
-			Type: plugins.App,
+			Type: plugins.TypeApp,
 			Includes: []*plugins.Includes{
 				{
 					Name:       "Hello",
@@ -73,11 +74,11 @@ func TestAddAppLinks(t *testing.T) {
 		},
 	}
 
-	testApp3 := plugins.PluginDTO{
+	testApp3 := pluginstore.Plugin{
 		JSONData: plugins.JSONData{
 			ID:   "test-app3",
 			Name: "Test app3 name",
-			Type: plugins.App,
+			Type: plugins.TypeApp,
 			Includes: []*plugins.Includes{
 				{
 					Name:       "Default page",
@@ -93,8 +94,8 @@ func TestAddAppLinks(t *testing.T) {
 					AddToNav: true,
 				},
 				{
-					Name:     "Connect data",
-					Path:     "/connections/connect-data",
+					Name:     "Add new connection",
+					Path:     "/connections/add-new-connection",
 					Type:     "page",
 					AddToNav: false,
 				},
@@ -114,35 +115,34 @@ func TestAddAppLinks(t *testing.T) {
 		accessControl:  accesscontrolmock.New().WithPermissions(permissions),
 		pluginSettings: &pluginSettings,
 		features:       featuremgmt.WithFeatures(),
-		pluginStore: plugins.FakePluginStore{
-			PluginList: []plugins.PluginDTO{testApp1, testApp2, testApp3},
+		pluginStore: &pluginstore.FakePluginStore{
+			PluginList: []pluginstore.Plugin{testApp1, testApp2, testApp3},
 		},
 	}
 
-	t.Run("Should add enabled apps with pages", func(t *testing.T) {
-		treeRoot := navtree.NavTreeRoot{}
-		err := service.addAppLinks(&treeRoot, reqCtx)
-		require.NoError(t, err)
-		require.Equal(t, "Test app1 name", treeRoot.Children[0].Text)
-		require.Equal(t, "/a/test-app1/catalog", treeRoot.Children[0].Url)
-		require.Equal(t, "/a/test-app1/page2", treeRoot.Children[0].Children[1].Url)
-	})
-
-	t.Run("Should move apps to Apps category when topnav is enabled", func(t *testing.T) {
-		service.features = featuremgmt.WithFeatures(featuremgmt.FlagTopnav)
+	t.Run("Should move apps to 'More apps' category", func(t *testing.T) {
 		treeRoot := navtree.NavTreeRoot{}
 		err := service.addAppLinks(&treeRoot, reqCtx)
 		require.NoError(t, err)
 
 		appsNode := treeRoot.FindById(navtree.NavIDApps)
 		require.NotNil(t, appsNode)
-		require.Equal(t, "Apps", appsNode.Text)
+		require.Equal(t, "More apps", appsNode.Text)
 		require.Len(t, appsNode.Children, 3)
 		require.Equal(t, testApp1.Name, appsNode.Children[0].Text)
 	})
 
-	t.Run("Should remove the default nav child (DefaultNav=true) when topnav is enabled and should set its URL to the plugin nav root", func(t *testing.T) {
-		service.features = featuremgmt.WithFeatures(featuremgmt.FlagTopnav)
+	t.Run("Should add enabled apps with pages", func(t *testing.T) {
+		treeRoot := navtree.NavTreeRoot{}
+		err := service.addAppLinks(&treeRoot, reqCtx)
+		require.NoError(t, err)
+		appsNode := treeRoot.FindById(navtree.NavIDApps)
+		require.Equal(t, "Test app1 name", appsNode.Children[0].Text)
+		require.Equal(t, "/a/test-app1/catalog", appsNode.Children[0].Url)
+		require.Equal(t, "/a/test-app1/page2", appsNode.Children[0].Children[0].Url)
+	})
+
+	t.Run("Should remove the default nav child (DefaultNav=true) and should set its URL to the plugin nav root", func(t *testing.T) {
 		treeRoot := navtree.NavTreeRoot{}
 		err := service.addAppLinks(&treeRoot, reqCtx)
 		require.NoError(t, err)
@@ -155,7 +155,6 @@ func TestAddAppLinks(t *testing.T) {
 
 	// This can be done by using `[navigation.app_sections]` in the INI config
 	t.Run("Should move apps that have root nav id configured to the root", func(t *testing.T) {
-		service.features = featuremgmt.WithFeatures(featuremgmt.FlagTopnav)
 		service.navigationAppConfig = map[string]NavigationAppConfig{
 			"test-app1": {SectionID: navtree.NavIDRoot},
 		}
@@ -169,7 +168,7 @@ func TestAddAppLinks(t *testing.T) {
 		require.Len(t, treeRoot.Children, 2)
 		require.Equal(t, "plugin-page-test-app1", treeRoot.Children[0].Id)
 
-		// Check if it is not under the "Apps" section anymore
+		// Check if it is not under the "More apps" section anymore
 		appsNode := treeRoot.FindById(navtree.NavIDApps)
 		require.NotNil(t, appsNode)
 		require.Len(t, appsNode.Children, 2)
@@ -179,26 +178,25 @@ func TestAddAppLinks(t *testing.T) {
 
 	// This can be done by using `[navigation.app_sections]` in the INI config
 	t.Run("Should move apps that have specific nav id configured to correct section", func(t *testing.T) {
-		service.features = featuremgmt.WithFeatures(featuremgmt.FlagTopnav)
 		service.navigationAppConfig = map[string]NavigationAppConfig{
-			"test-app1": {SectionID: navtree.NavIDAdmin},
+			"test-app1": {SectionID: navtree.NavIDCfg},
 		}
 
 		treeRoot := navtree.NavTreeRoot{}
 		treeRoot.AddSection(&navtree.NavLink{
-			Id: navtree.NavIDAdmin,
+			Id: navtree.NavIDCfg,
 		})
 
 		err := service.addAppLinks(&treeRoot, reqCtx)
 		require.NoError(t, err)
 
 		// Check if the plugin gets moved over to the "Admin" section
-		adminNode := treeRoot.FindById(navtree.NavIDAdmin)
+		adminNode := treeRoot.FindById(navtree.NavIDCfg)
 		require.NotNil(t, adminNode)
 		require.Len(t, adminNode.Children, 1)
 		require.Equal(t, "plugin-page-test-app1", adminNode.Children[0].Id)
 
-		// Check if it is not under the "Apps" section anymore
+		// Check if it is not under the "More apps" section anymore
 		appsNode := treeRoot.FindById(navtree.NavIDApps)
 		require.NotNil(t, appsNode)
 		require.Len(t, appsNode.Children, 2)
@@ -206,8 +204,7 @@ func TestAddAppLinks(t *testing.T) {
 		require.Equal(t, "plugin-page-test-app3", appsNode.Children[1].Id)
 	})
 
-	t.Run("Should only add a 'Monitoring' section if a plugin exists that wants to live there", func(t *testing.T) {
-		service.features = featuremgmt.WithFeatures(featuremgmt.FlagTopnav)
+	t.Run("Should only add an 'Observability' section if a plugin exists that wants to live there", func(t *testing.T) {
 		service.navigationAppConfig = map[string]NavigationAppConfig{}
 
 		// Check if the Monitoring section is not there if no apps try to register to it
@@ -231,7 +228,6 @@ func TestAddAppLinks(t *testing.T) {
 	})
 
 	t.Run("Should add a 'Alerts and Incidents' section if a plugin exists that wants to live there", func(t *testing.T) {
-		service.features = featuremgmt.WithFeatures(featuremgmt.FlagTopnav)
 		service.navigationAppConfig = map[string]NavigationAppConfig{}
 
 		// Check if the 'Alerts and Incidents' section is not there if no apps try to register to it
@@ -257,7 +253,6 @@ func TestAddAppLinks(t *testing.T) {
 	})
 
 	t.Run("Should add a 'Alerts and Incidents' section if a plugin exists that wants to live there even without an alerting node", func(t *testing.T) {
-		service.features = featuremgmt.WithFeatures(featuremgmt.FlagTopnav)
 		service.navigationAppConfig = map[string]NavigationAppConfig{}
 
 		// Check if the 'Alerts and Incidents' section is not there if no apps try to register to it
@@ -281,7 +276,6 @@ func TestAddAppLinks(t *testing.T) {
 	})
 
 	t.Run("Should be able to control app sort order with SortWeight (smaller SortWeight displayed first)", func(t *testing.T) {
-		service.features = featuremgmt.WithFeatures(featuremgmt.FlagTopnav)
 		service.navigationAppConfig = map[string]NavigationAppConfig{
 			"test-app2": {SectionID: navtree.NavIDMonitoring, SortWeight: 2},
 			"test-app1": {SectionID: navtree.NavIDMonitoring, SortWeight: 3},
@@ -300,10 +294,9 @@ func TestAddAppLinks(t *testing.T) {
 	})
 
 	t.Run("Should replace page from plugin", func(t *testing.T) {
-		service.features = featuremgmt.WithFeatures(featuremgmt.FlagTopnav, featuremgmt.FlagDataConnectionsConsole)
 		service.navigationAppConfig = map[string]NavigationAppConfig{}
 		service.navigationAppPathConfig = map[string]NavigationAppConfig{
-			"/connections/connect-data": {SectionID: "connections"},
+			"/connections/add-new-connection": {SectionID: "connections"},
 		}
 
 		// Build nav-tree and check if the "Connections" page is there
@@ -313,10 +306,10 @@ func TestAddAppLinks(t *testing.T) {
 		require.NotNil(t, connectionsNode)
 		require.Equal(t, "Connections", connectionsNode.Text)
 
-		// Check if the original "Connect data" page (served by core) is there until we add the standalone plugin page
+		// Check if the original "Add new connection" page (served by core) is there until we add the standalone plugin page
 		connectDataNode := connectionsNode.Children[0]
-		require.Equal(t, "Connect data", connectDataNode.Text)
-		require.Equal(t, "connections-connect-data", connectDataNode.Id)
+		require.Equal(t, "Add new connection", connectDataNode.Text)
+		require.Equal(t, "connections-add-new-connection", connectDataNode.Id)
 		require.Equal(t, "", connectDataNode.PluginID)
 
 		// Check if the standalone plugin page appears under the section where we registered it and if it overrides the original page
@@ -324,8 +317,8 @@ func TestAddAppLinks(t *testing.T) {
 
 		require.NoError(t, err)
 		require.Equal(t, "Connections", connectionsNode.Text)
-		require.Equal(t, "Connect data", connectDataNode.Text)
-		require.Equal(t, "standalone-plugin-page-/connections/connect-data", connectDataNode.Id) // Overridden "Connect data" page
+		require.Equal(t, "Add new connection", connectDataNode.Text)
+		require.Equal(t, "standalone-plugin-page-/connections/add-new-connection", connectDataNode.Id) // Overridden "Add new connection" page
 		require.Equal(t, "test-app3", connectDataNode.PluginID)
 
 		// Check if the standalone plugin page does not appear under the app section anymore
@@ -340,7 +333,6 @@ func TestAddAppLinks(t *testing.T) {
 	})
 
 	t.Run("Should not register pages under the app plugin section unless AddToNav=true", func(t *testing.T) {
-		service.features = featuremgmt.WithFeatures(featuremgmt.FlagTopnav, featuremgmt.FlagDataConnectionsConsole)
 		service.navigationAppPathConfig = map[string]NavigationAppConfig{} // We don't configure it as a standalone plugin page
 
 		treeRoot := navtree.NavTreeRoot{}
@@ -349,12 +341,12 @@ func TestAddAppLinks(t *testing.T) {
 		require.NoError(t, err)
 
 		// The original core page should exist under the section
-		connectDataNode := treeRoot.FindById("connections-connect-data")
-		require.Equal(t, "connections-connect-data", connectDataNode.Id)
+		connectDataNode := treeRoot.FindById("connections-add-new-connection")
+		require.Equal(t, "connections-add-new-connection", connectDataNode.Id)
 		require.Equal(t, "", connectDataNode.PluginID)
 
 		// The standalone plugin page should not be found in the navtree at all (as we didn't configure it)
-		standaloneConnectDataNode := treeRoot.FindById("standalone-plugin-page-/connections/connect-data")
+		standaloneConnectDataNode := treeRoot.FindById("standalone-plugin-page-/connections/add-new-connection")
 		require.Nil(t, standaloneConnectDataNode)
 
 		// Only the pages that have `AddToNav=true` appear under the plugin navigation
@@ -368,18 +360,20 @@ func TestAddAppLinks(t *testing.T) {
 func TestReadingNavigationSettings(t *testing.T) {
 	t.Run("Should include defaults", func(t *testing.T) {
 		service := ServiceImpl{
-			cfg: setting.NewCfg(),
+			cfg:      setting.NewCfg(),
+			features: featuremgmt.WithFeatures(),
 		}
 
 		_, _ = service.cfg.Raw.NewSection("navigation.app_sections")
 		service.readNavigationSettings()
 
-		require.Equal(t, "monitoring", service.navigationAppConfig["grafana-k8s-app"].SectionID)
+		require.Equal(t, "infrastructure", service.navigationAppConfig["grafana-k8s-app"].SectionID)
 	})
 
 	t.Run("Can add additional overrides via ini system", func(t *testing.T) {
 		service := ServiceImpl{
-			cfg: setting.NewCfg(),
+			cfg:      setting.NewCfg(),
+			features: featuremgmt.WithFeatures(),
 		}
 
 		appSections, _ := service.cfg.Raw.NewSection("navigation.app_sections")
@@ -393,7 +387,7 @@ func TestReadingNavigationSettings(t *testing.T) {
 		require.Equal(t, "dashboards", service.navigationAppConfig["grafana-k8s-app"].SectionID)
 		require.Equal(t, "admin", service.navigationAppConfig["other-app"].SectionID)
 
-		require.Equal(t, int64(0), service.navigationAppConfig["grafana-k8s-app"].SortWeight)
+		require.Equal(t, int64(1), service.navigationAppConfig["grafana-k8s-app"].SortWeight)
 		require.Equal(t, int64(12), service.navigationAppConfig["other-app"].SortWeight)
 
 		require.Equal(t, "admin", service.navigationAppPathConfig["/a/grafana-k8s-app/foo"].SectionID)
@@ -407,25 +401,33 @@ func TestAddAppLinksAccessControl(t *testing.T) {
 	reqCtx := &contextmodel.ReqContext{SignedInUser: user, Context: &web.Context{Req: httpReq}}
 	catalogReadAction := "test-app1.catalog:read"
 
-	testApp1 := plugins.PluginDTO{
+	testApp1 := pluginstore.Plugin{
 		JSONData: plugins.JSONData{
-			ID: "test-app1", Name: "Test app1 name", Type: plugins.App,
+			ID: "test-app1", Name: "Test app1 name", Type: plugins.TypeApp,
 			Includes: []*plugins.Includes{
 				{
-					Name:       "Catalog",
-					Path:       "/a/test-app1/catalog",
+					Name:       "Home",
+					Path:       "/a/test-app1/home",
 					Type:       "page",
 					AddToNav:   true,
 					DefaultNav: true,
-					Role:       roletype.RoleEditor,
-					Action:     catalogReadAction,
+					Role:       identity.RoleViewer,
 				},
 				{
-					Name:     "Page2",
-					Path:     "/a/test-app1/page2",
+					Name:     "Catalog",
+					Path:     "/a/test-app1/catalog",
 					Type:     "page",
 					AddToNav: true,
-					Role:     roletype.RoleViewer,
+					Role:     identity.RoleEditor,
+					Action:   catalogReadAction,
+				},
+				{
+					Name:     "Announcements",
+					Path:     "/a/test-app1/announcements",
+					Type:     "page",
+					AddToNav: true,
+					Role:     identity.RoleViewer,
+					Action:   pluginaccesscontrol.ActionAppAccess,
 				},
 			},
 		},
@@ -440,81 +442,122 @@ func TestAddAppLinksAccessControl(t *testing.T) {
 	service := ServiceImpl{
 		log:            log.New("navtree"),
 		cfg:            cfg,
-		accessControl:  acimpl.ProvideAccessControl(cfg),
+		accessControl:  acimpl.ProvideAccessControl(featuremgmt.WithFeatures()),
 		pluginSettings: &pluginSettings,
 		features:       featuremgmt.WithFeatures(),
-		pluginStore: plugins.FakePluginStore{
-			PluginList: []plugins.PluginDTO{testApp1},
+		pluginStore: &pluginstore.FakePluginStore{
+			PluginList: []pluginstore.Plugin{testApp1},
 		},
 	}
 
-	t.Run("Should not add app links when the user cannot access app plugins", func(t *testing.T) {
-		treeRoot := navtree.NavTreeRoot{}
-		user.Permissions = map[int64]map[string][]string{}
-		user.OrgRole = roletype.RoleAdmin
+	t.Run("Without plugin RBAC - Enforce role", func(t *testing.T) {
+		t.Run("Should not add app links when the user cannot access app plugins", func(t *testing.T) {
+			treeRoot := navtree.NavTreeRoot{}
+			user.Permissions = map[int64]map[string][]string{}
+			user.OrgRole = identity.RoleAdmin
 
-		err := service.addAppLinks(&treeRoot, reqCtx)
-		require.NoError(t, err)
-		require.Len(t, treeRoot.Children, 0)
+			err := service.addAppLinks(&treeRoot, reqCtx)
+			require.NoError(t, err)
+			require.Len(t, treeRoot.Children, 0)
+		})
+		t.Run(" Should add all includes when the user is an editor", func(t *testing.T) {
+			treeRoot := navtree.NavTreeRoot{}
+			user.Permissions = map[int64]map[string][]string{
+				1: {pluginaccesscontrol.ActionAppAccess: []string{"*"}},
+			}
+			user.OrgRole = identity.RoleEditor
+
+			err := service.addAppLinks(&treeRoot, reqCtx)
+			require.NoError(t, err)
+			appsNode := treeRoot.FindById(navtree.NavIDApps)
+			require.Len(t, appsNode.Children, 1)
+			require.Equal(t, "Test app1 name", appsNode.Children[0].Text)
+			require.Equal(t, "/a/test-app1/home", appsNode.Children[0].Url)
+			require.Len(t, appsNode.Children[0].Children, 2)
+			require.Equal(t, "/a/test-app1/catalog", appsNode.Children[0].Children[0].Url)
+			require.Equal(t, "/a/test-app1/announcements", appsNode.Children[0].Children[1].Url)
+		})
+		t.Run("Should add two includes when the user is a viewer", func(t *testing.T) {
+			treeRoot := navtree.NavTreeRoot{}
+			user.Permissions = map[int64]map[string][]string{
+				1: {pluginaccesscontrol.ActionAppAccess: []string{"*"}},
+			}
+			user.OrgRole = identity.RoleViewer
+
+			err := service.addAppLinks(&treeRoot, reqCtx)
+			require.NoError(t, err)
+			appsNode := treeRoot.FindById(navtree.NavIDApps)
+			require.Len(t, appsNode.Children, 1)
+			require.Equal(t, "Test app1 name", appsNode.Children[0].Text)
+			require.Equal(t, "/a/test-app1/home", appsNode.Children[0].Url)
+			require.Len(t, appsNode.Children[0].Children, 1)
+			require.Equal(t, "/a/test-app1/announcements", appsNode.Children[0].Children[0].Url)
+		})
 	})
-	t.Run("Should add both includes when the user is an editor", func(t *testing.T) {
-		treeRoot := navtree.NavTreeRoot{}
-		user.Permissions = map[int64]map[string][]string{
-			1: {pluginaccesscontrol.ActionAppAccess: []string{"*"}},
-		}
-		user.OrgRole = roletype.RoleEditor
 
-		err := service.addAppLinks(&treeRoot, reqCtx)
-		require.NoError(t, err)
-		require.Len(t, treeRoot.Children, 1)
-		require.Equal(t, "Test app1 name", treeRoot.Children[0].Text)
-		require.Len(t, treeRoot.Children[0].Children, 2)
-		require.Equal(t, "/a/test-app1/catalog", treeRoot.Children[0].Children[0].Url)
-		require.Equal(t, "/a/test-app1/page2", treeRoot.Children[0].Children[1].Url)
-	})
-	t.Run("Should add one include when the user is a viewer", func(t *testing.T) {
-		treeRoot := navtree.NavTreeRoot{}
-		user.Permissions = map[int64]map[string][]string{
-			1: {pluginaccesscontrol.ActionAppAccess: []string{"*"}},
-		}
-		user.OrgRole = roletype.RoleViewer
+	t.Run("With plugin RBAC - Enforce action first", func(t *testing.T) {
+		t.Run("Should not see any includes with no app access", func(t *testing.T) {
+			treeRoot := navtree.NavTreeRoot{}
+			user.Permissions = map[int64]map[string][]string{
+				1: {pluginaccesscontrol.ActionAppAccess: []string{"plugins:id:not-the-test-app1"}},
+			}
+			user.OrgRole = identity.RoleNone
+			service.features = featuremgmt.WithFeatures(featuremgmt.FlagAccessControlOnCall)
 
-		err := service.addAppLinks(&treeRoot, reqCtx)
-		require.NoError(t, err)
-		require.Len(t, treeRoot.Children, 1)
-		require.Equal(t, "Test app1 name", treeRoot.Children[0].Text)
-		require.Len(t, treeRoot.Children[0].Children, 1)
-		require.Equal(t, "/a/test-app1/page2", treeRoot.Children[0].Children[0].Url)
-	})
-	t.Run("Should add both includes when the user is a viewer with catalog read", func(t *testing.T) {
-		treeRoot := navtree.NavTreeRoot{}
-		user.Permissions = map[int64]map[string][]string{
-			1: {pluginaccesscontrol.ActionAppAccess: []string{"*"}, catalogReadAction: []string{}},
-		}
-		user.OrgRole = roletype.RoleViewer
-		service.features = featuremgmt.WithFeatures(featuremgmt.FlagAccessControlOnCall)
+			err := service.addAppLinks(&treeRoot, reqCtx)
+			require.NoError(t, err)
+			require.Len(t, treeRoot.Children, 0)
+		})
+		t.Run("Should only see the announcements as a none role user with app access", func(t *testing.T) {
+			treeRoot := navtree.NavTreeRoot{}
+			user.Permissions = map[int64]map[string][]string{
+				1: {pluginaccesscontrol.ActionAppAccess: []string{"plugins:id:test-app1"}},
+			}
+			user.OrgRole = identity.RoleNone
+			service.features = featuremgmt.WithFeatures(featuremgmt.FlagAccessControlOnCall)
 
-		err := service.addAppLinks(&treeRoot, reqCtx)
-		require.NoError(t, err)
-		require.Len(t, treeRoot.Children, 1)
-		require.Equal(t, "Test app1 name", treeRoot.Children[0].Text)
-		require.Len(t, treeRoot.Children[0].Children, 2)
-		require.Equal(t, "/a/test-app1/catalog", treeRoot.Children[0].Children[0].Url)
-		require.Equal(t, "/a/test-app1/page2", treeRoot.Children[0].Children[1].Url)
-	})
-	t.Run("Should add one include when the user is an editor without catalog read", func(t *testing.T) {
-		treeRoot := navtree.NavTreeRoot{}
-		user.Permissions = map[int64]map[string][]string{
-			1: {pluginaccesscontrol.ActionAppAccess: []string{"*"}},
-		}
-		user.OrgRole = roletype.RoleEditor
-		service.features = featuremgmt.WithFeatures(featuremgmt.FlagAccessControlOnCall)
+			err := service.addAppLinks(&treeRoot, reqCtx)
+			require.NoError(t, err)
+			appsNode := treeRoot.FindById(navtree.NavIDApps)
+			require.Len(t, appsNode.Children, 1)
+			require.Equal(t, "Test app1 name", appsNode.Children[0].Text)
+			require.Len(t, appsNode.Children[0].Children, 1)
+			require.Equal(t, "/a/test-app1/announcements", appsNode.Children[0].Children[0].Url)
+		})
+		t.Run("Should now see the catalog as a viewer with catalog read", func(t *testing.T) {
+			treeRoot := navtree.NavTreeRoot{}
+			user.Permissions = map[int64]map[string][]string{
+				1: {pluginaccesscontrol.ActionAppAccess: []string{"plugins:id:test-app1"}, catalogReadAction: []string{}},
+			}
+			user.OrgRole = identity.RoleViewer
+			service.features = featuremgmt.WithFeatures(featuremgmt.FlagAccessControlOnCall)
 
-		err := service.addAppLinks(&treeRoot, reqCtx)
-		require.NoError(t, err)
-		require.Len(t, treeRoot.Children, 1)
-		require.Equal(t, "Test app1 name", treeRoot.Children[0].Text)
-		require.Len(t, treeRoot.Children[0].Children, 1)
-		require.Equal(t, "/a/test-app1/page2", treeRoot.Children[0].Children[0].Url)
+			err := service.addAppLinks(&treeRoot, reqCtx)
+			require.NoError(t, err)
+			appsNode := treeRoot.FindById(navtree.NavIDApps)
+			require.Len(t, appsNode.Children, 1)
+			require.Equal(t, "Test app1 name", appsNode.Children[0].Text)
+			require.Equal(t, "/a/test-app1/home", appsNode.Children[0].Url)
+			require.Len(t, appsNode.Children[0].Children, 2)
+			require.Equal(t, "/a/test-app1/catalog", appsNode.Children[0].Children[0].Url)
+			require.Equal(t, "/a/test-app1/announcements", appsNode.Children[0].Children[1].Url)
+		})
+		t.Run("Should not see the catalog include as an editor without catalog read", func(t *testing.T) {
+			treeRoot := navtree.NavTreeRoot{}
+			user.Permissions = map[int64]map[string][]string{
+				1: {pluginaccesscontrol.ActionAppAccess: []string{"*"}},
+			}
+			user.OrgRole = identity.RoleEditor
+			service.features = featuremgmt.WithFeatures(featuremgmt.FlagAccessControlOnCall)
+
+			err := service.addAppLinks(&treeRoot, reqCtx)
+			require.NoError(t, err)
+			appsNode := treeRoot.FindById(navtree.NavIDApps)
+			require.Len(t, appsNode.Children, 1)
+			require.Equal(t, "Test app1 name", appsNode.Children[0].Text)
+			require.Equal(t, "/a/test-app1/home", appsNode.Children[0].Url)
+			require.Len(t, appsNode.Children[0].Children, 1)
+			require.Equal(t, "/a/test-app1/announcements", appsNode.Children[0].Children[0].Url)
+		})
 	})
 }

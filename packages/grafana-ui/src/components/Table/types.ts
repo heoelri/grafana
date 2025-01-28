@@ -2,21 +2,39 @@ import { Property } from 'csstype';
 import { FC } from 'react';
 import { CellProps, Column, Row, TableState, UseExpandedRowProps } from 'react-table';
 
-import { DataFrame, Field, KeyValue, SelectableValue } from '@grafana/data';
-import { TableCellHeight } from '@grafana/schema';
+import {
+  DataFrame,
+  Field,
+  KeyValue,
+  SelectableValue,
+  TimeRange,
+  FieldConfigSource,
+  ActionModel,
+  InterpolateFunction,
+} from '@grafana/data';
+import * as schema from '@grafana/schema';
 
+import { TableCellInspectorMode } from './TableCellInspector';
 import { TableStyles } from './styles';
 
 export {
-  type TableFieldOptions,
-  TableCellDisplayMode,
   type FieldTextAlignment,
   TableCellBackgroundDisplayMode,
+  TableCellDisplayMode,
+  type TableAutoCellOptions,
+  type TableSparklineCellOptions,
+  type TableBarGaugeCellOptions,
+  type TableColoredBackgroundCellOptions,
+  type TableColorTextCellOptions,
+  type TableImageCellOptions,
+  type TableJsonViewCellOptions,
 } from '@grafana/schema';
 
 export interface TableRow {
   [x: string]: any;
 }
+
+export type InspectCell = { value: any; mode: TableCellInspectorMode };
 
 export const FILTER_FOR_OPERATOR = '=';
 export const FILTER_OUT_OPERATOR = '!=';
@@ -25,6 +43,7 @@ export type AdHocFilterItem = { key: string; value: string; operator: AdHocFilte
 export type TableFilterActionCallback = (item: AdHocFilterItem) => void;
 export type TableColumnResizeActionCallback = (fieldDisplayName: string, width: number) => void;
 export type TableSortByActionCallback = (state: TableSortByFieldState[]) => void;
+export type TableInspectCellCallback = (state: InspectCell) => void;
 
 export interface TableSortByFieldState {
   displayName: string;
@@ -37,6 +56,9 @@ export interface TableCellProps extends CellProps<any> {
   field: Field;
   onCellFilterAdded?: TableFilterActionCallback;
   innerWidth: number;
+  frame: DataFrame;
+  actions?: ActionModel[];
+  setInspectCell?: TableInspectCellCallback;
 }
 
 export type CellComponent = FC<TableCellProps>;
@@ -60,11 +82,19 @@ export interface TableFooterCalc {
 }
 
 export interface GrafanaTableState extends TableState {
-  lastExpandedIndex?: number;
-  toggleRowExpandedCounter: number;
+  // We manually track this to know where to reset the row heights. This is needed because react-table removed the
+  // collapsed IDs/indexes from the state.expanded map so when collapsing we would have to do a diff of current and
+  // previous state.expanded to know what changed.
+  lastExpandedOrCollapsedIndex?: number;
 }
 
 export interface GrafanaTableRow extends Row, UseExpandedRowProps<{}> {}
+
+export interface TableStateReducerProps {
+  onColumnResize?: TableColumnResizeActionCallback;
+  onSortByChange?: TableSortByActionCallback;
+  data: DataFrame;
+}
 
 export interface Props {
   ariaLabel?: string;
@@ -77,7 +107,6 @@ export interface Props {
   noHeader?: boolean;
   showTypeIcons?: boolean;
   resizable?: boolean;
-  showRowNums?: boolean;
   initialSortBy?: TableSortByFieldState[];
   onColumnResize?: TableColumnResizeActionCallback;
   onSortByChange?: TableSortByActionCallback;
@@ -85,7 +114,67 @@ export interface Props {
   footerOptions?: TableFooterCalc;
   footerValues?: FooterItem[];
   enablePagination?: boolean;
-  cellHeight?: TableCellHeight;
-  /** @alpha */
-  subData?: DataFrame[];
+  cellHeight?: schema.TableCellHeight;
+  /** @alpha Used by SparklineCell when provided */
+  timeRange?: TimeRange;
+  enableSharedCrosshair?: boolean;
+  // The index of the field value that the table will initialize scrolled to
+  initialRowIndex?: number;
+  fieldConfig?: FieldConfigSource;
+  getActions?: GetActionsFunction;
+  replaceVariables?: InterpolateFunction;
 }
+
+/**
+ * @alpha
+ * Props that will be passed to the TableCustomCellOptions.cellComponent when rendered.
+ */
+export interface CustomCellRendererProps {
+  field: Field;
+  rowIndex: number;
+  frame: DataFrame;
+  // Would be great to have generic type for this but that would need having a generic DataFrame type where the field
+  // types could be propagated here.
+  value: unknown;
+}
+
+/**
+ * @alpha
+ * Can be used to define completely custom cell contents by providing a custom cellComponent.
+ */
+export interface TableCustomCellOptions {
+  cellComponent: FC<CustomCellRendererProps>;
+  type: schema.TableCellDisplayMode.Custom;
+}
+
+/**
+ * @alpha
+ * Props that will be passed to the TableCustomCellOptions.cellComponent when rendered.
+ */
+export interface CustomHeaderRendererProps {
+  field: Field;
+  defaultContent: React.ReactNode;
+}
+
+// As cue/schema cannot define function types (as main point of schema is to be serializable) we have to extend the
+// types here with the dynamic API. This means right now this is not usable as a table panel option for example.
+export type TableCellOptions = schema.TableCellOptions | TableCustomCellOptions;
+export type TableFieldOptions = Omit<schema.TableFieldOptions, 'cellOptions'> & {
+  cellOptions: TableCellOptions;
+  headerComponent?: React.ComponentType<CustomHeaderRendererProps>;
+};
+
+// Cell background and text colors
+// Can also be used for table rows
+export interface CellColors {
+  textColor?: string;
+  bgColor?: string;
+  bgHoverColor?: string;
+}
+
+export type GetActionsFunction = (
+  frame: DataFrame,
+  field: Field,
+  rowIndex: number,
+  replaceVariables?: InterpolateFunction
+) => ActionModel[];

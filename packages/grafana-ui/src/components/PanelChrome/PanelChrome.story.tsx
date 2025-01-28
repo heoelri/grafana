@@ -1,23 +1,29 @@
 import { action } from '@storybook/addon-actions';
-import { ComponentMeta, ComponentStory } from '@storybook/react';
+import { Meta, StoryFn } from '@storybook/react';
 import { merge } from 'lodash';
-import React, { CSSProperties, useState, ReactNode } from 'react';
-import { useInterval } from 'react-use';
+import { CSSProperties, useState, ReactNode } from 'react';
+import { useInterval, useToggle } from 'react-use';
 
 import { LoadingState } from '@grafana/data';
-import { PanelChrome, PanelChromeProps } from '@grafana/ui';
 
 import { DashboardStoryCanvas } from '../../utils/storybook/DashboardStoryCanvas';
-import { withCenteredStory } from '../../utils/storybook/withCenteredStory';
-import { HorizontalGroup } from '../Layout/Layout';
+import { Button } from '../Button';
+import { RadioButtonGroup } from '../Forms/RadioButtonGroup/RadioButtonGroup';
+import { Icon } from '../Icon/Icon';
+import { Stack } from '../Layout/Stack/Stack';
 import { Menu } from '../Menu/Menu';
 
+import { PanelChromeProps } from './PanelChrome';
 import mdx from './PanelChrome.mdx';
 
-const meta: ComponentMeta<typeof PanelChrome> = {
+import { PanelChrome } from '.';
+
+const PANEL_WIDTH = 400;
+const PANEL_HEIGHT = 150;
+
+const meta: Meta<typeof PanelChrome> = {
   title: 'Visualizations/PanelChrome',
   component: PanelChrome,
-  decorators: [withCenteredStory],
   parameters: {
     controls: {
       exclude: ['children'],
@@ -39,8 +45,8 @@ function getContentStyle(): CSSProperties {
 
 function renderPanel(name: string, overrides?: Partial<PanelChromeProps>) {
   const props: PanelChromeProps = {
-    width: 400,
-    height: 130,
+    width: PANEL_WIDTH,
+    height: PANEL_HEIGHT,
     children: () => undefined,
   };
 
@@ -50,11 +56,38 @@ function renderPanel(name: string, overrides?: Partial<PanelChromeProps>) {
 
   return (
     <PanelChrome {...props}>
-      {(innerWidth, innerHeight) => {
+      {(innerWidth: number, innerHeight: number) => {
         return <div style={{ width: innerWidth, height: innerHeight, ...contentStyle }}>{name}</div>;
       }}
     </PanelChrome>
   );
+}
+
+function renderCollapsiblePanel(name: string, overrides?: Partial<PanelChromeProps>) {
+  const props: PanelChromeProps = {
+    width: PANEL_WIDTH,
+    height: PANEL_HEIGHT,
+    children: () => undefined,
+    collapsible: true,
+  };
+
+  merge(props, overrides);
+
+  const contentStyle = getContentStyle();
+
+  const ControlledCollapseComponent = () => {
+    const [collapsed, toggleCollapsed] = useToggle(false);
+
+    return (
+      <PanelChrome {...props} collapsed={collapsed} onToggleCollapse={toggleCollapsed}>
+        {(innerWidth: number, innerHeight: number) => {
+          return <div style={{ width: innerWidth, height: innerHeight, ...contentStyle }}>{name}</div>;
+        }}
+      </PanelChrome>
+    );
+  };
+
+  return <ControlledCollapseComponent />;
 }
 
 const menu = (
@@ -96,7 +129,7 @@ export const Examples = () => {
   return (
     <DashboardStoryCanvas>
       <div>
-        <HorizontalGroup spacing="md" align="flex-start" wrap>
+        <Stack gap={2} alignItems="flex-start" wrap="wrap">
           {renderPanel('Has statusMessage', {
             title: 'Default title',
             statusMessage: 'Error text',
@@ -131,10 +164,6 @@ export const Examples = () => {
           {renderPanel('No title, streaming loadingState', {
             loadingState: LoadingState.Streaming,
           })}
-          {renderPanel('No title, loading loadingState', {
-            loadingState: LoadingState.Loading,
-          })}
-
           {renderPanel('Error status, menu', {
             title: 'Default title',
             menu,
@@ -162,16 +191,6 @@ export const Examples = () => {
             menu,
             loadingState: LoadingState.Loading,
           })}
-          {renderPanel('Deprecated error indicator', {
-            title: 'Default title',
-            leftItems: [
-              <PanelChrome.ErrorIndicator
-                key="errorIndicator"
-                error="Error text"
-                onClick={action('ErrorIndicator: onClick fired')}
-              />,
-            ],
-          })}
           {renderPanel('No padding, deprecated loading indicator', {
             padding: 'none',
             title: 'Default title',
@@ -183,30 +202,148 @@ export const Examples = () => {
               />,
             ],
           })}
-          {renderPanel('Deprecated error indicator, menu', {
-            title: 'Default title',
-            menu,
-            leftItems: [
-              <PanelChrome.ErrorIndicator
-                key="errorIndicator"
-                error="Error text"
-                onClick={action('ErrorIndicator: onClick fired')}
-              />,
-            ],
-          })}
           {renderPanel('Display mode = transparent', {
             title: 'Default title',
             displayMode: 'transparent',
             menu,
-            leftItems: [],
           })}
-        </HorizontalGroup>
+          {renderPanel('Actions with button no menu', {
+            title: 'Actions with button no menu',
+            actions: (
+              <Button size="sm" variant="secondary" key="A">
+                Breakdown
+              </Button>
+            ),
+          })}
+          {renderPanel('Panel with two actions', {
+            title: 'I have two buttons',
+            actions: [
+              <Button size="sm" variant="secondary" key="A">
+                Breakdown
+              </Button>,
+              <Button size="sm" variant="secondary" icon="times" key="B" />,
+            ],
+          })}
+          {renderPanel('With radio button', {
+            title: 'I have a radio button',
+            actions: [
+              <RadioButtonGroup
+                key="radio-button-group"
+                size="sm"
+                value="A"
+                options={[
+                  { label: 'Graph', value: 'A' },
+                  { label: 'Table', value: 'B' },
+                ]}
+              />,
+            ],
+          })}
+          {renderCollapsiblePanel('Collapsible panel', {
+            title: 'Default title',
+            collapsible: true,
+          })}
+          {renderPanel('Menu always visible', {
+            title: 'Menu always visible',
+            showMenuAlways: true,
+            menu,
+          })}
+          {renderPanel('Panel with action link', {
+            title: 'Panel with action link',
+            actions: (
+              <a className="external-link" href="/some/page">
+                Error details
+                <Icon name="arrow-right" />
+              </a>
+            ),
+          })}
+          {renderPanel('Action and menu (should be rare)', {
+            title: 'Action and menu',
+            menu,
+            actions: (
+              <Button size="sm" variant="secondary">
+                Breakdown
+              </Button>
+            ),
+          })}
+        </Stack>
       </div>
     </DashboardStoryCanvas>
   );
 };
 
-export const Basic: ComponentStory<typeof PanelChrome> = (args: PanelChromeProps) => {
+export const ExamplesHoverHeader = () => {
+  return (
+    <DashboardStoryCanvas>
+      <div>
+        <Stack gap={2} alignItems="flex-start" wrap="wrap">
+          {renderPanel('Title items, menu, hover header', {
+            title: 'Default title',
+            description: 'This is a description',
+            menu,
+            hoverHeader: true,
+            dragClass: 'draggable',
+            titleItems: (
+              <PanelChrome.TitleItem title="Online">
+                <Icon name="heart" />
+              </PanelChrome.TitleItem>
+            ),
+          })}
+          {renderPanel('Multiple title items', {
+            title: 'Default title',
+            menu,
+            hoverHeader: true,
+            dragClass: 'draggable',
+            titleItems: [
+              <PanelChrome.TitleItem title="Online" key="A">
+                <Icon name="heart" />
+              </PanelChrome.TitleItem>,
+              <PanelChrome.TitleItem title="Link" key="B" onClick={() => {}}>
+                <Icon name="external-link-alt" />
+              </PanelChrome.TitleItem>,
+            ],
+          })}
+          {renderPanel('Hover header, loading loadingState', {
+            loadingState: LoadingState.Loading,
+            hoverHeader: true,
+            title: 'I am a hover header',
+            dragClass: 'draggable',
+          })}
+          {renderPanel('No title, Hover header', {
+            hoverHeader: true,
+            dragClass: 'draggable',
+          })}
+          {renderPanel('Should not have drag icon', {
+            title: 'No drag icon',
+            hoverHeader: true,
+          })}
+          {renderPanel('With action link', {
+            title: 'With link in hover header',
+            hoverHeader: true,
+            actions: (
+              <a className="external-link" href="/some/page">
+                Error details
+                <Icon name="arrow-right" />
+              </a>
+            ),
+          })}
+        </Stack>
+      </div>
+    </DashboardStoryCanvas>
+  );
+};
+
+export const Basic: StoryFn<typeof PanelChrome> = (overrides?: Partial<PanelChromeProps>) => {
+  const args = {
+    width: 400,
+    height: 200,
+    title: 'Very long title that should get ellipsis when there is no more space',
+    description,
+    menu,
+    children: () => undefined,
+  };
+
+  merge(args, overrides);
+
   const contentStyle = getContentStyle();
 
   return (
@@ -222,15 +359,8 @@ const Default: ReactNode = [];
 const LoadingIcon = [
   <PanelChrome.LoadingIndicator key="loadingIndicator" loading onCancel={action('LoadingIndicator: onCancel fired')} />,
 ];
-const ErrorIcon = [
-  <PanelChrome.ErrorIndicator
-    key="errorIndicator"
-    error="Error text"
-    onClick={action('ErrorIndicator: onClick fired')}
-  />,
-];
 
-const leftItems = { LoadingIcon, ErrorIcon, Default };
+const leftItems = { LoadingIcon, Default };
 
 const description =
   'Description text with very long descriptive words that describe what is going on in the panel and not beyond. Or maybe beyond, not up to us.';
@@ -244,19 +374,10 @@ Basic.argTypes = {
       type: 'select',
       labels: {
         LoadingIcon: 'With loading icon',
-        ErrorIcon: 'With error icon',
         Default: 'Default (no elements)',
       },
     },
   },
-};
-
-Basic.args = {
-  width: 400,
-  height: 200,
-  title: 'Very long title that should get ellipsis when there is no more space',
-  description,
-  menu,
 };
 
 export default meta;

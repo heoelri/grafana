@@ -1,31 +1,39 @@
 import { Property } from 'csstype';
-import { clone } from 'lodash';
-import memoizeOne from 'memoize-one';
-import { Row } from 'react-table';
+import { clone, sampleSize } from 'lodash';
+import memoize from 'micro-memoize';
+import { HeaderGroup, Row } from 'react-table';
+import tinycolor from 'tinycolor2';
 
 import {
   DataFrame,
+  DisplayValue,
+  DisplayValueAlignmentFactors,
   Field,
+  FieldConfigSource,
+  fieldReducers,
   FieldType,
   formattedValueToString,
-  getFieldDisplayName,
-  SelectableValue,
-  fieldReducers,
   getDisplayProcessor,
-  reduceField,
+  getFieldDisplayName,
   GrafanaTheme2,
-  ArrayVector,
   isDataFrame,
+  isDataFrameWithValue,
   isTimeSeriesFrame,
+  reduceField,
+  SelectableValue,
 } from '@grafana/data';
 import {
   BarGaugeDisplayMode,
   TableAutoCellOptions,
   TableCellBackgroundDisplayMode,
-  TableCellOptions,
+  TableCellDisplayMode,
 } from '@grafana/schema';
 
+import { getTextColorForAlphaBackground } from '../../utils';
+
+import { ActionsCell } from './ActionsCell';
 import { BarGaugeCell } from './BarGaugeCell';
+import { DataLinksCell } from './DataLinksCell';
 import { DefaultCell } from './DefaultCell';
 import { getFooterValue } from './FooterRow';
 import { GeoCell } from './GeoCell';
@@ -33,17 +41,18 @@ import { ImageCell } from './ImageCell';
 import { JSONViewCell } from './JSONViewCell';
 import { RowExpander } from './RowExpander';
 import { SparklineCell } from './SparklineCell';
+import { TableStyles } from './styles';
 import {
+  CellColors,
   CellComponent,
-  TableCellDisplayMode,
-  TableFieldOptions,
   FooterItem,
   GrafanaTableColumn,
+  TableCellOptions,
+  TableFieldOptions,
   TableFooterCalc,
 } from './types';
 
 export const EXPANDER_WIDTH = 50;
-export const OPTIONAL_ROW_NUMBER_COLUMN_WIDTH = 50;
 
 export function getTextAlign(field?: Field): Property.JustifyContent {
   if (!field) {
@@ -51,7 +60,7 @@ export function getTextAlign(field?: Field): Property.JustifyContent {
   }
 
   if (field.config.custom) {
-    const custom = field.config.custom as TableFieldOptions;
+    const custom: TableFieldOptions = field.config.custom;
 
     switch (custom.align) {
       case 'right':
@@ -86,6 +95,8 @@ export function getColumns(
       // Make an expander cell
       Header: () => null, // No header
       id: 'expander', // It needs an ID
+      // @ts-expect-error
+      // TODO fix type error here
       Cell: RowExpander,
       width: EXPANDER_WIDTH,
       minWidth: EXPANDER_WIDTH,
@@ -101,8 +112,8 @@ export function getColumns(
   }
 
   for (const [fieldIndex, field] of data.fields.entries()) {
-    const fieldTableOptions = (field.config.custom || {}) as TableFieldOptions;
-    if (fieldTableOptions.hidden) {
+    const fieldTableOptions: TableFieldOptions = field.config.custom || {};
+    if (fieldTableOptions.hidden || field.type === FieldType.nestedFrames) {
       continue;
     }
 
@@ -115,6 +126,7 @@ export function getColumns(
     const selectSortType = (type: FieldType) => {
       switch (type) {
         case FieldType.number:
+        case FieldType.frame:
           return 'number';
         case FieldType.time:
           return 'basic';
@@ -125,17 +137,17 @@ export function getColumns(
 
     const Cell = getCellComponent(fieldTableOptions.cellOptions?.type, field);
     columns.push({
+      // @ts-expect-error
+      // TODO fix type error here
       Cell,
       id: fieldIndex.toString(),
       field: field,
-      Header: getFieldDisplayName(field, data),
-      accessor: (_row: any, i: number) => {
-        return field.values.get(i);
-      },
+      Header: fieldTableOptions.hideHeader ? '' : getFieldDisplayName(field, data),
+      accessor: (_row, i) => field.values[i],
       sortType: selectSortType(field.type),
       width: fieldTableOptions.width,
       minWidth: fieldTableOptions.minWidth ?? columnMinWidth,
-      filter: memoizeOne(filterByValue(field)),
+      filter: memoize(filterByValue(field)),
       justifyContent: getTextAlign(field),
       Footer: getFooterValue(fieldIndex, footerValues, isCountRowsSet),
     });
@@ -165,27 +177,9 @@ export function getColumns(
   return columns;
 }
 
-/*
-  Build `Field` data for row numbers and prepend to the field array;
-  this way, on other column's sort, the row numbers will persist in their proper place.
-*/
-export function buildFieldsForOptionalRowNums(totalRows: number): Field {
-  return {
-    ...defaultRowNumberColumnFieldData,
-    values: buildBufferedEmptyValues(totalRows),
-  };
-}
-
-/*
-  This gives us an empty buffered ArrayVector of the desired length to match the table data.
-  It is simply a data placeholder for the Row Number column data.
-*/
-export function buildBufferedEmptyValues(totalRows: number): ArrayVector<string> {
-  return new ArrayVector(new Array(totalRows));
-}
-
 export function getCellComponent(displayMode: TableCellDisplayMode, field: Field): CellComponent {
   switch (displayMode) {
+    case TableCellDisplayMode.Custom:
     case TableCellDisplayMode.ColorText:
     case TableCellDisplayMode.ColorBackground:
       return DefaultCell;
@@ -197,6 +191,10 @@ export function getCellComponent(displayMode: TableCellDisplayMode, field: Field
       return SparklineCell;
     case TableCellDisplayMode.JSONView:
       return JSONViewCell;
+    case TableCellDisplayMode.DataLinks:
+      return DataLinksCell;
+    case TableCellDisplayMode.Actions:
+      return ActionsCell;
   }
 
   if (field.type === FieldType.geo) {
@@ -204,7 +202,7 @@ export function getCellComponent(displayMode: TableCellDisplayMode, field: Field
   }
 
   if (field.type === FieldType.frame) {
-    const firstValue = field.values.get(0);
+    const firstValue = field.values[0];
     if (isDataFrame(firstValue) && isTimeSeriesFrame(firstValue)) {
       return SparklineCell;
     }
@@ -264,16 +262,16 @@ export function rowToFieldValue(row: any, field?: Field): string {
     return '';
   }
 
-  const fieldValue = field.values.get(row.index);
+  const fieldValue = field.values[row.index];
   const displayValue = field.display ? field.display(fieldValue) : fieldValue;
   const value = field.display ? formattedValueToString(displayValue) : displayValue;
 
   return value;
 }
 
-export function valuesToOptions(unique: Record<string, any>): SelectableValue[] {
+export function valuesToOptions(unique: Record<string, unknown>): SelectableValue[] {
   return Object.keys(unique)
-    .reduce((all, key) => all.concat({ value: unique[key], label: key }), [] as SelectableValue[])
+    .reduce<SelectableValue[]>((all, key) => all.concat({ value: unique[key], label: key }), [])
     .sort(sortOptions);
 }
 
@@ -309,18 +307,22 @@ export function getFilteredOptions(options: SelectableValue[], filterValues?: Se
   return options.filter((option) => filterValues.some((filtered) => filtered.value === option.value));
 }
 
-export function sortCaseInsensitive(a: Row<any>, b: Row<any>, id: string) {
+export function sortCaseInsensitive(a: Row, b: Row, id: string) {
   return String(a.values[id]).localeCompare(String(b.values[id]), undefined, { sensitivity: 'base' });
 }
 
 // sortNumber needs to have great performance as it is called a lot
-export function sortNumber(rowA: Row<any>, rowB: Row<any>, id: string) {
+export function sortNumber(rowA: Row, rowB: Row, id: string) {
   const a = toNumber(rowA.values[id]);
   const b = toNumber(rowB.values[id]);
   return a === b ? 0 : a > b ? 1 : -1;
 }
 
 function toNumber(value: any): number {
+  if (isDataFrameWithValue(value)) {
+    return value.value ?? Number.NEGATIVE_INFINITY;
+  }
+
   if (value === null || value === undefined || value === '' || isNaN(value)) {
     return Number.NEGATIVE_INFINITY;
   }
@@ -338,24 +340,6 @@ export function getFooterItems(
   options: TableFooterCalc,
   theme2: GrafanaTheme2
 ): FooterItem[] {
-  /*
-    Here, `filterFields` is passed as the `headerGroups[0].headers` array
-    that was destructured from the `useTable` hook. Unfortunately, since
-    the `headerGroups` object is data based ONLY on the rendered "non-hidden"
-    column headers, it will NOT include the Row Number column if it has been
-    toggled off. This will shift the rendering of the footer left 1 column,
-    creating an off-by-one issue. This is why we test for a `field.id` of "0".
-    If the condition is truthy, the togglable Row Number column is being rendered,
-    and we can proceed normally. If not, we must add the field data in its place
-    so that the footer data renders in the expected column.
-  */
-  if (!filterFields.some((field) => field?.id === '0')) {
-    const length = values.length;
-    // Build the additional field that will correct the off-by-one footer issue.
-    const fieldToAdd = { id: '0', field: buildFieldsForOptionalRowNums(length) };
-    filterFields = [fieldToAdd, ...filterFields];
-  }
-
   /*
     The FooterItems[] are calculated using both the `headerGroups[0].headers`
     (filterFields) and `rows` (values) destructured from the useTable() hook.
@@ -383,8 +367,8 @@ export function getFooterItems(
   return filterFields.map((data, i) => {
     // Then test for numerical data - this will filter out placeholder `filterFields` as well.
     if (data?.field?.type !== FieldType.number) {
-      // Show the reducer type ("Total", "Range", "Count", "Delta", etc) in the first non "Row Number" column, only if it cannot be numerically reduced.
-      if (i === 1 && options.reducer && options.reducer.length > 0) {
+      // Show the reducer in the first column
+      if (i === 0 && options.reducer && options.reducer.length > 0) {
         const reducer = fieldReducers.get(options.reducer[0]);
         return reducer.name;
       }
@@ -393,7 +377,7 @@ export function getFooterItems(
     }
 
     let newField = clone(data.field);
-    newField.values = new ArrayVector(values[data.id]);
+    newField.values = values[data.id];
     newField.state = undefined;
 
     data.field = newField;
@@ -410,10 +394,25 @@ export function getFooterItems(
 }
 
 function getFormattedValue(field: Field, reducer: string[], theme: GrafanaTheme2) {
-  const fmt = field.display ?? getDisplayProcessor({ field, theme });
+  // If we don't have anything to return then we display nothing
   const calc = reducer[0];
-  const v = reduceField({ field, reducers: reducer })[calc];
-  return formattedValueToString(fmt(v));
+  if (calc === undefined) {
+    return '';
+  }
+
+  // Calculate the reduction
+  const format = field.display ?? getDisplayProcessor({ field, theme });
+  const fieldCalcValue = reduceField({ field, reducers: reducer })[calc];
+
+  // If the reducer preserves units then format the
+  // end value with the field display processor
+  const reducerInfo = fieldReducers.get(calc);
+  if (reducerInfo.preservesUnits) {
+    return formattedValueToString(format(fieldCalcValue));
+  }
+
+  // Otherwise we simply return the formatted string
+  return formattedValueToString({ text: fieldCalcValue });
 }
 
 // This strips the raw vales from the `rows` object.
@@ -443,7 +442,7 @@ export function getCellOptions(field: Field): TableCellOptions {
     return defaultCellOptions;
   }
 
-  return (field.config.custom as TableFieldOptions).cellOptions;
+  return field.config.custom.cellOptions;
 }
 
 /**
@@ -494,34 +493,6 @@ export function migrateTableDisplayModeToCellOptions(displayMode: TableCellDispl
   }
 }
 
-/*
-  For building the column data for the togglable Row Number field.
-  `values` property is omitted, as it will be added at a later time.
-*/
-export const defaultRowNumberColumnFieldData: Omit<Field, 'values'> = {
-  /*
-    Single whitespace as value for `name` property so as to render an empty/invisible column header;
-    without the single whitespace, falsey headers (empty strings) are given a default name of "Value".
-  */
-  name: ' ',
-  display: function (value) {
-    return {
-      numeric: Number(value),
-      text: value != null ? String(value) : '',
-    };
-  },
-  type: FieldType.string,
-  config: {
-    color: { mode: 'thresholds' },
-    custom: {
-      align: 'auto',
-      cellOptions: { type: 'auto' },
-      inspect: false,
-      width: OPTIONAL_ROW_NUMBER_COLUMN_WIDTH,
-    },
-  },
-};
-
 /**
  * This recurses through an array of `filterFields` (Array<{ id: string; field?: Field } | undefined>)
  * and adds back the missing indecies that are removed due to hiding a column through an panel override.
@@ -538,7 +509,7 @@ function addMissingColumnIndex(columns: Array<{ id: string; field?: Field } | un
   const missingIndex = columns.findIndex((field, index) => field?.id !== String(index));
 
   // Base case
-  if (missingIndex === -1) {
+  if (missingIndex === -1 || columns[missingIndex]?.id === 'expander') {
     return;
   }
 
@@ -547,4 +518,248 @@ function addMissingColumnIndex(columns: Array<{ id: string; field?: Field } | un
 
   // Recurse
   addMissingColumnIndex(columns);
+}
+
+/**
+ * Getting gauge or sparkline values to align is very tricky without looking at all values and passing them through display processor.
+ * For very large tables that could pretty expensive. So this is kind of a compromise. We look at the first 1000 rows and cache the longest value.
+ * If we have a cached value we just check if the current value is longer and update the alignmentFactor. This can obviously still lead to
+ * unaligned gauges but it should a lot less common.
+ **/
+export function getAlignmentFactor(
+  field: Field,
+  displayValue: DisplayValue,
+  rowIndex: number
+): DisplayValueAlignmentFactors {
+  let alignmentFactor = field.state?.alignmentFactors;
+
+  if (alignmentFactor) {
+    // check if current alignmentFactor is still the longest
+    if (formattedValueToString(alignmentFactor).length < formattedValueToString(displayValue).length) {
+      alignmentFactor = { ...displayValue };
+      field.state!.alignmentFactors = alignmentFactor;
+    }
+    return alignmentFactor;
+  } else {
+    // look at the next 1000 rows
+    alignmentFactor = { ...displayValue };
+    const maxIndex = Math.min(field.values.length, rowIndex + 1000);
+
+    for (let i = rowIndex + 1; i < maxIndex; i++) {
+      const nextDisplayValue = field.display!(field.values[i]);
+      if (formattedValueToString(alignmentFactor).length > formattedValueToString(nextDisplayValue).length) {
+        alignmentFactor.text = displayValue.text;
+      }
+    }
+
+    if (field.state) {
+      field.state.alignmentFactors = alignmentFactor;
+    } else {
+      field.state = { alignmentFactors: alignmentFactor };
+    }
+
+    return alignmentFactor;
+  }
+}
+
+// since the conversion from timeseries panel crosshair to time is pixel based, we need
+// to set a threshold where the table row highlights when the crosshair is hovered over a certain point
+// because multiple pixels (converted to times) may represent the same point/row in table
+export function isPointTimeValAroundTableTimeVal(pointTime: number, rowTime: number, threshold: number) {
+  return Math.abs(Math.floor(pointTime) - rowTime) < threshold;
+}
+
+// calculate the threshold for which we consider a point in a chart
+// to match a row in a table based on a time value
+export function calculateAroundPointThreshold(timeField: Field): number {
+  let max = -Number.MAX_VALUE;
+  let min = Number.MAX_VALUE;
+
+  if (timeField.values.length < 2) {
+    return 0;
+  }
+
+  for (let i = 0; i < timeField.values.length; i++) {
+    const value = timeField.values[i];
+    if (value > max) {
+      max = value;
+    }
+    if (value < min) {
+      min = value;
+    }
+  }
+
+  return (max - min) / timeField.values.length;
+}
+
+/**
+ * Retrieve colors for a table cell (or table row).
+ *
+ * @param tableStyles
+ *  Styles for the table
+ * @param cellOptions
+ *  Table cell configuration options
+ * @param displayValue
+ *  The value that will be displayed
+ * @returns CellColors
+ */
+export function getCellColors(
+  tableStyles: TableStyles,
+  cellOptions: TableCellOptions,
+  displayValue: DisplayValue
+): CellColors {
+  // How much to darken elements depends upon if we're in dark mode
+  const darkeningFactor = tableStyles.theme.isDark ? 1 : -0.7;
+
+  // Setup color variables
+  let textColor: string | undefined = undefined;
+  let bgColor: string | undefined = undefined;
+  let bgHoverColor: string | undefined = undefined;
+
+  if (cellOptions.type === TableCellDisplayMode.ColorText) {
+    textColor = displayValue.color;
+  } else if (cellOptions.type === TableCellDisplayMode.ColorBackground) {
+    const mode = cellOptions.mode ?? TableCellBackgroundDisplayMode.Gradient;
+
+    if (mode === TableCellBackgroundDisplayMode.Basic) {
+      textColor = getTextColorForAlphaBackground(displayValue.color!, tableStyles.theme.isDark);
+      bgColor = tinycolor(displayValue.color).toRgbString();
+      bgHoverColor = tinycolor(displayValue.color).setAlpha(1).toRgbString();
+    } else if (mode === TableCellBackgroundDisplayMode.Gradient) {
+      const hoverColor = tinycolor(displayValue.color).setAlpha(1).toRgbString();
+      const bgColor2 = tinycolor(displayValue.color)
+        .darken(10 * darkeningFactor)
+        .spin(5);
+      textColor = getTextColorForAlphaBackground(displayValue.color!, tableStyles.theme.isDark);
+      bgColor = `linear-gradient(120deg, ${bgColor2.toRgbString()}, ${displayValue.color})`;
+      bgHoverColor = `linear-gradient(120deg, ${bgColor2.setAlpha(1).toRgbString()}, ${hoverColor})`;
+    }
+  }
+
+  return { textColor, bgColor, bgHoverColor };
+}
+
+/**
+ * Calculate an estimated bounding box for a block
+ * of text using an offscreen canvas.
+ */
+export function guessTextBoundingBox(
+  text: string,
+  headerGroup: HeaderGroup,
+  osContext: OffscreenCanvasRenderingContext2D | null,
+  lineHeight: number,
+  defaultRowHeight: number,
+  padding = 0
+) {
+  const width = Number(headerGroup?.width ?? 300);
+  const LINE_SCALE_FACTOR = 1.17;
+  const LOW_LINE_PAD = 42;
+  const PADDING = padding * 2;
+
+  if (osContext !== null && typeof text === 'string') {
+    const words = text.split(/\s/);
+    const lines = [];
+    let currentLine = '';
+    let wordCount = 0;
+    let extraLines = 0;
+
+    // Let's just wrap the lines and see how well the measurement works
+    for (let i = 0; i < words.length; i++) {
+      const currentWord = words[i];
+      let lineWidth = osContext.measureText(currentLine + ' ' + currentWord).width;
+
+      if (lineWidth < width - PADDING) {
+        currentLine += ' ' + currentWord;
+        wordCount++;
+      } else {
+        lines.push({
+          width: lineWidth,
+          line: currentLine,
+        });
+
+        currentLine = currentWord;
+        wordCount = 0;
+      }
+    }
+
+    // We can have extra long strings, for these
+    // we estimate if it overshoots the line by
+    // at least one other line
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].width > width) {
+        let extra = Math.floor(lines[i].width / width) - 1;
+        extraLines += extra;
+      }
+    }
+
+    // Estimated height would be lines multiplied
+    // by the line height
+    let lineNumber = lines.length + extraLines;
+    let height = 38;
+    if (lineNumber > 5) {
+      height = lineNumber * lineHeight * LINE_SCALE_FACTOR;
+    } else {
+      height = lineNumber * lineHeight + LOW_LINE_PAD;
+    }
+    height += PADDING;
+
+    return { width, height };
+  }
+
+  return { width, height: defaultRowHeight };
+}
+
+/**
+ * A function to guess at which field has the longest text.
+ * To do this we either select a single record if there aren't many records
+ * or we select records at random and sample their size.
+ */
+export function guessLongestField(fieldConfig: FieldConfigSource, data: DataFrame) {
+  let longestField = undefined;
+  const SAMPLE_SIZE = 3;
+
+  // If the default field option is set to allow text wrapping
+  // we determine the field to wrap text with here and then
+  // pass it to the RowsList
+  if (fieldConfig.defaults.custom?.cellOptions?.wrapText) {
+    const stringFields = data.fields.filter((field: Field) => field.type === FieldType.string);
+
+    if (stringFields.length >= 1 && stringFields[0].values.length > 0) {
+      const numValues = stringFields[0].values.length;
+      let longestLength = 0;
+
+      // If we have less than 30 values we assume
+      // that the first record is representative
+      // of the overall data
+      if (numValues <= 30) {
+        for (const field of stringFields) {
+          const fieldLength = field.values[0].length;
+          if (fieldLength > longestLength) {
+            longestLength = fieldLength;
+            longestField = field;
+          }
+        }
+      }
+      // Otherwise we randomly sample SAMPLE_SIZE values and take
+      // the mean length
+      else {
+        for (const field of stringFields) {
+          // This could result in duplicate values but
+          // that should be fairly unlikely. This could potentially
+          // be improved using a Set datastructure but
+          // going to leave that one as an exercise for
+          // the reader to contemplate and possibly code
+          const vals = sampleSize(field.values, SAMPLE_SIZE);
+          const meanLength = (vals[0]?.length + vals[1]?.length + vals[2]?.length) / 3;
+
+          if (meanLength > longestLength) {
+            longestLength = meanLength;
+            longestField = field;
+          }
+        }
+      }
+    }
+  }
+
+  return longestField;
 }

@@ -1,6 +1,7 @@
 package elasticsearch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,10 +12,16 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
+	"github.com/grafana/grafana-plugin-sdk-go/backend/tracing"
 	"github.com/grafana/grafana-plugin-sdk-go/data"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/grafana/grafana/pkg/components/simplejson"
 	es "github.com/grafana/grafana/pkg/tsdb/elasticsearch/client"
+	"github.com/grafana/grafana/pkg/tsdb/elasticsearch/instrumentation"
 )
 
 const (
@@ -38,43 +45,59 @@ const (
 )
 
 var searchWordsRegex = regexp.MustCompile(regexp.QuoteMeta(es.HighlightPreTagsString) + `(.*?)` + regexp.QuoteMeta(es.HighlightPostTagsString))
+var aliasPatternRegex = regexp.MustCompile(`\{\{([\s\S]+?)\}\}`)
 
-func parseResponse(responses []*es.SearchResponse, targets []*Query, configuredFields es.ConfiguredFields) (*backend.QueryDataResponse, error) {
+func parseResponse(ctx context.Context, responses []*es.SearchResponse, targets []*Query, configuredFields es.ConfiguredFields, keepLabelsInResponse bool, logger log.Logger) (*backend.QueryDataResponse, error) {
 	result := backend.QueryDataResponse{
 		Responses: backend.Responses{},
 	}
 	if responses == nil {
 		return &result, nil
 	}
+	ctx, span := tracing.DefaultTracer().Start(ctx, "datasource.elastic.parseResponse", trace.WithAttributes(
+		attribute.Int("responseLength", len(responses)),
+	))
+	defer span.End()
 
 	for i, res := range responses {
+		_, resSpan := tracing.DefaultTracer().Start(ctx, "datasource.elastic.parseResponse.response", trace.WithAttributes(
+			attribute.String("queryMetricType", targets[i].Metrics[0].Type),
+		))
+		start := time.Now()
 		target := targets[i]
 
 		if res.Error != nil {
+			mt, _ := json.Marshal(target)
+			me, _ := json.Marshal(res.Error)
+			resSpan.RecordError(errors.New(string(me)))
+			resSpan.SetStatus(codes.Error, string(me))
+			resSpan.End()
+			logger.Error("Processing error response from Elasticsearch", "error", string(me), "query", string(mt))
 			errResult := getErrorFromElasticResponse(res)
-			result.Responses[target.RefID] = backend.DataResponse{
-				Error: errors.New(errResult),
-			}
+			result.Responses[target.RefID] = backend.ErrorResponseWithErrorSource(backend.DownstreamError(errors.New(errResult)))
 			continue
 		}
 
 		queryRes := backend.DataResponse{}
 
 		if isRawDataQuery(target) {
-			err := processRawDataResponse(res, target, configuredFields, &queryRes)
+			err := processRawDataResponse(res, target, configuredFields, &queryRes, logger)
 			if err != nil {
+				// TODO: This error never happens so we should remove it
 				return &backend.QueryDataResponse{}, err
 			}
 			result.Responses[target.RefID] = queryRes
 		} else if isRawDocumentQuery(target) {
-			err := processRawDocumentResponse(res, target, &queryRes)
+			err := processRawDocumentResponse(res, target, &queryRes, logger)
 			if err != nil {
+				// TODO: This error never happens so we should remove it
 				return &backend.QueryDataResponse{}, err
 			}
 			result.Responses[target.RefID] = queryRes
 		} else if isLogsQuery(target) {
-			err := processLogsResponse(res, target, configuredFields, &queryRes)
+			err := processLogsResponse(res, target, configuredFields, &queryRes, logger)
 			if err != nil {
+				// TODO: This error never happens so we should remove it
 				return &backend.QueryDataResponse{}, err
 			}
 			result.Responses[target.RefID] = queryRes
@@ -82,27 +105,45 @@ func parseResponse(responses []*es.SearchResponse, targets []*Query, configuredF
 			// Process as metric query result
 			props := make(map[string]string)
 			err := processBuckets(res.Aggregations, target, &queryRes, props, 0)
+			logger.Debug("Processed metric query response")
 			if err != nil {
+				mt, _ := json.Marshal(target)
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				resSpan.RecordError(err)
+				resSpan.SetStatus(codes.Error, err.Error())
+				logger.Error("Error processing buckets", "error", err, "query", string(mt), "aggregationsLength", len(res.Aggregations), "stage", es.StageParseResponse)
+				instrumentation.UpdatePluginParsingResponseDurationSeconds(ctx, time.Since(start), "error")
+				resSpan.End()
 				return &backend.QueryDataResponse{}, err
 			}
-			nameFrames(queryRes, target)
+			nameFields(queryRes, target, keepLabelsInResponse)
 			trimDatapoints(queryRes, target)
 
 			result.Responses[target.RefID] = queryRes
 		}
+		instrumentation.UpdatePluginParsingResponseDurationSeconds(ctx, time.Since(start), "ok")
+		logger.Info("Finished processing of response", "duration", time.Since(start), "stage", es.StageParseResponse)
+		resSpan.End()
 	}
 	return &result, nil
 }
 
-func processLogsResponse(res *es.SearchResponse, target *Query, configuredFields es.ConfiguredFields, queryRes *backend.DataResponse) error {
+func processLogsResponse(res *es.SearchResponse, target *Query, configuredFields es.ConfiguredFields, queryRes *backend.DataResponse, logger log.Logger) error {
 	propNames := make(map[string]bool)
 	docs := make([]map[string]interface{}, len(res.Hits.Hits))
 	searchWords := make(map[string]bool)
 
 	for hitIdx, hit := range res.Hits.Hits {
 		var flattened map[string]interface{}
+		var sourceString string
 		if hit["_source"] != nil {
-			flattened = flatten(hit["_source"].(map[string]interface{}))
+			flattened = flatten(hit["_source"].(map[string]interface{}), 10)
+			sourceMarshalled, err := json.Marshal(flattened)
+			if err != nil {
+				return err
+			}
+			sourceString = string(sourceMarshalled)
 		}
 
 		doc := map[string]interface{}{
@@ -111,7 +152,8 @@ func processLogsResponse(res *es.SearchResponse, target *Query, configuredFields
 			"_index":    hit["_index"],
 			"sort":      hit["sort"],
 			"highlight": hit["highlight"],
-			"_source":   flattened,
+			// In case of logs query we want to have the raw source as a string field so it can be visualized in logs panel
+			"_source": sourceString,
 		}
 
 		for k, v := range flattened {
@@ -120,6 +162,21 @@ func processLogsResponse(res *es.SearchResponse, target *Query, configuredFields
 			} else {
 				doc[k] = v
 			}
+		}
+
+		if hit["fields"] != nil {
+			source, ok := hit["fields"].(map[string]interface{})
+			if ok {
+				for k, v := range source {
+					doc[k] = v
+				}
+			}
+		}
+
+		// we are going to add an `id` field with the concatenation of `_id` and `_index`
+		_, ok := doc["id"]
+		if !ok {
+			doc["id"] = fmt.Sprintf("%v#%v", doc["_index"], doc["_id"])
 		}
 
 		for key := range doc {
@@ -151,21 +208,22 @@ func processLogsResponse(res *es.SearchResponse, target *Query, configuredFields
 	frames := data.Frames{}
 	frame := data.NewFrame("", fields...)
 	setPreferredVisType(frame, data.VisTypeLogs)
-	setSearchWords(frame, searchWords)
+	setLogsCustomMeta(frame, searchWords, stringToIntWithDefaultValue(target.Metrics[0].Settings.Get("limit").MustString(), defaultSize))
 	frames = append(frames, frame)
-
 	queryRes.Frames = frames
+
+	logger.Debug("Processed log query response", "fieldsLength", len(frame.Fields))
 	return nil
 }
 
-func processRawDataResponse(res *es.SearchResponse, target *Query, configuredFields es.ConfiguredFields, queryRes *backend.DataResponse) error {
+func processRawDataResponse(res *es.SearchResponse, target *Query, configuredFields es.ConfiguredFields, queryRes *backend.DataResponse, logger log.Logger) error {
 	propNames := make(map[string]bool)
 	docs := make([]map[string]interface{}, len(res.Hits.Hits))
 
 	for hitIdx, hit := range res.Hits.Hits {
 		var flattened map[string]interface{}
 		if hit["_source"] != nil {
-			flattened = flatten(hit["_source"].(map[string]interface{}))
+			flattened = flatten(hit["_source"].(map[string]interface{}), 10)
 		}
 
 		doc := map[string]interface{}{
@@ -180,6 +238,15 @@ func processRawDataResponse(res *es.SearchResponse, target *Query, configuredFie
 			doc[k] = v
 		}
 
+		if hit["fields"] != nil {
+			source, ok := hit["fields"].(map[string]interface{})
+			if ok {
+				for k, v := range source {
+					doc[k] = v
+				}
+			}
+		}
+
 		for key := range doc {
 			propNames[key] = true
 		}
@@ -192,13 +259,15 @@ func processRawDataResponse(res *es.SearchResponse, target *Query, configuredFie
 
 	frames := data.Frames{}
 	frame := data.NewFrame("", fields...)
-	frames = append(frames, frame)
 
+	frames = append(frames, frame)
 	queryRes.Frames = frames
+
+	logger.Debug("Processed raw data query response", "fieldsLength", len(frame.Fields))
 	return nil
 }
 
-func processRawDocumentResponse(res *es.SearchResponse, target *Query, queryRes *backend.DataResponse) error {
+func processRawDocumentResponse(res *es.SearchResponse, target *Query, queryRes *backend.DataResponse, logger log.Logger) error {
 	docs := make([]map[string]interface{}, len(res.Hits.Hits))
 	for hitIdx, hit := range res.Hits.Hits {
 		doc := map[string]interface{}{
@@ -251,6 +320,7 @@ func processRawDocumentResponse(res *es.SearchResponse, target *Query, queryRes 
 	frames = append(frames, frame)
 
 	queryRes.Frames = frames
+	logger.Debug("Processed raw document query response", "fieldsLength", len(frame.Fields))
 	return nil
 }
 
@@ -258,15 +328,27 @@ func processDocsToDataFrameFields(docs []map[string]interface{}, propNames []str
 	size := len(docs)
 	isFilterable := true
 	allFields := make([]*data.Field, len(propNames))
+	timeString := ""
+	timeStringOk := false
 
 	for propNameIdx, propName := range propNames {
 		// Special handling for time field
 		if propName == configuredFields.TimeField {
 			timeVector := make([]*time.Time, size)
 			for i, doc := range docs {
-				timeString, ok := doc[configuredFields.TimeField].(string)
-				if !ok {
-					continue
+				// Check if time field is a string
+				timeString, timeStringOk = doc[configuredFields.TimeField].(string)
+				// If not, it might be an array with one time string
+				if !timeStringOk {
+					timeList, ok := doc[configuredFields.TimeField].([]interface{})
+					if !ok || len(timeList) != 1 {
+						continue
+					}
+					// Check if the first element is a string
+					timeString, timeStringOk = timeList[0].(string)
+					if !timeStringOk {
+						continue
+					}
 				}
 				timeValue, err := time.Parse(time.RFC3339Nano, timeString)
 				if err != nil {
@@ -623,32 +705,32 @@ func processMetrics(esAgg *simplejson.Json, target *Query, query *backend.DataRe
 		case countType:
 			countFrames, err := processCountMetric(jsonBuckets, props)
 			if err != nil {
-				return err
+				return fmt.Errorf("error processing count metric: %w", err)
 			}
 			frames = append(frames, countFrames...)
 		case percentilesType:
 			percentileFrames, err := processPercentilesMetric(metric, jsonBuckets, props)
 			if err != nil {
-				return err
+				return fmt.Errorf("error processing percentiles metric: %w", err)
 			}
 			frames = append(frames, percentileFrames...)
 		case topMetricsType:
 			topMetricsFrames, err := processTopMetricsMetric(metric, jsonBuckets, props)
 			if err != nil {
-				return err
+				return fmt.Errorf("error processing top metrics metric: %w", err)
 			}
 			frames = append(frames, topMetricsFrames...)
 		case extendedStatsType:
 			extendedStatsFrames, err := processExtendedStatsMetric(metric, jsonBuckets, props)
 			if err != nil {
-				return err
+				return fmt.Errorf("error processing extended stats metric: %w", err)
 			}
 
 			frames = append(frames, extendedStatsFrames...)
 		default:
 			defaultFrames, err := processDefaultMetric(metric, jsonBuckets, props)
 			if err != nil {
-				return err
+				return fmt.Errorf("error processing default metric: %w", err)
 			}
 			frames = append(frames, defaultFrames...)
 		}
@@ -686,7 +768,7 @@ func processAggregationDocs(esAgg *simplejson.Json, aggDef *BucketAgg, target *Q
 				} else {
 					f, err := bucket.Get("key").Float64()
 					if err != nil {
-						return err
+						return fmt.Errorf("error appending bucket key to existing field with name %s: %w", field.Name, err)
 					}
 					field.Append(&f)
 				}
@@ -701,7 +783,7 @@ func processAggregationDocs(esAgg *simplejson.Json, aggDef *BucketAgg, target *Q
 			} else {
 				f, err := bucket.Get("key").Float64()
 				if err != nil {
-					return err
+					return fmt.Errorf("error appending bucket key to new field with name %s: %w", aggDef.Field, err)
 				}
 				aggDefField = extractDataField(aggDef.Field, &f)
 				aggDefField.Append(&f)
@@ -791,22 +873,22 @@ func trimDatapoints(queryResult backend.DataResponse, target *Query) {
 // we sort the label's pairs by the label-key,
 // and return the label-values
 func getSortedLabelValues(labels data.Labels) []string {
-	var keys []string
+	keys := make([]string, 0, len(labels))
 	for key := range labels {
 		keys = append(keys, key)
 	}
 
 	sort.Strings(keys)
 
-	var values []string
-	for _, key := range keys {
-		values = append(values, labels[key])
+	values := make([]string, len(keys))
+	for i, key := range keys {
+		values[i] = labels[key]
 	}
 
 	return values
 }
 
-func nameFrames(queryResult backend.DataResponse, target *Query) {
+func nameFields(queryResult backend.DataResponse, target *Query, keepLabelsInResponse bool) {
 	set := make(map[string]struct{})
 	frames := queryResult.Frames
 	for _, v := range frames {
@@ -825,12 +907,21 @@ func nameFrames(queryResult backend.DataResponse, target *Query) {
 			// another is "number"
 			valueField := frame.Fields[1]
 			fieldName := getFieldName(*valueField, target, metricTypeCount)
-			frame.Name = fieldName
+			// If we  need to keep the labels in the response, to prevent duplication in names and to keep
+			// backward compatibility with alerting and expressions we use DisplayNameFromDS
+			if keepLabelsInResponse {
+				if valueField.Config == nil {
+					valueField.Config = &data.FieldConfig{}
+				}
+				valueField.Config.DisplayNameFromDS = fieldName
+				// If we don't need to keep labels (how frontend mode worked), we use frame.Name and remove labels
+			} else {
+				valueField.Labels = nil
+				frame.Name = fieldName
+			}
 		}
 	}
 }
-
-var aliasPatternRegex = regexp.MustCompile(`\{\{([\s\S]+?)\}\}`)
 
 func getFieldName(dataField data.Field, target *Query, metricTypeCount int) string {
 	metricType := dataField.Labels["metric"]
@@ -895,7 +986,7 @@ func getFieldName(dataField data.Field, target *Query, metricTypeCount int) stri
 				found := false
 				for _, metric := range target.Metrics {
 					if metric.ID == field {
-						metricName += " " + describeMetric(metric.Type, field)
+						metricName += " " + describeMetric(metric.Type, metric.Field)
 						found = true
 					}
 				}
@@ -1017,38 +1108,26 @@ func getErrorFromElasticResponse(response *es.SearchResponse) string {
 }
 
 // flatten flattens multi-level objects to single level objects. It uses dot notation to join keys.
-func flatten(target map[string]interface{}) map[string]interface{} {
+func flatten(target map[string]interface{}, maxDepth int) map[string]interface{} {
 	// On frontend maxDepth wasn't used but as we are processing on backend
 	// let's put a limit to avoid infinite loop. 10 was chosen arbitrary.
-	maxDepth := 10
-	currentDepth := 0
-	delimiter := ""
 	output := make(map[string]interface{})
+	step(0, maxDepth, target, "", output)
+	return output
+}
 
-	var step func(object map[string]interface{}, prev string)
+func step(currentDepth, maxDepth int, target map[string]interface{}, prev string, output map[string]interface{}) {
+	nextDepth := currentDepth + 1
+	for key, value := range target {
+		newKey := strings.Trim(prev+"."+key, ".")
 
-	step = func(object map[string]interface{}, prev string) {
-		for key, value := range object {
-			if prev == "" {
-				delimiter = ""
-			} else {
-				delimiter = "."
-			}
-			newKey := prev + delimiter + key
-
-			v, ok := value.(map[string]interface{})
-			shouldStepInside := ok && len(v) > 0 && currentDepth < maxDepth
-			if shouldStepInside {
-				currentDepth++
-				step(v, newKey)
-			} else {
-				output[newKey] = value
-			}
+		v, ok := value.(map[string]interface{})
+		if ok && len(v) > 0 && currentDepth < maxDepth {
+			step(nextDepth, maxDepth, v, newKey, output)
+		} else {
+			output[newKey] = value
 		}
 	}
-
-	step(target, "")
-	return output
 }
 
 // sortPropNames orders propNames so that timeField is first (if it exists), log message field is second
@@ -1113,7 +1192,7 @@ func setPreferredVisType(frame *data.Frame, visType data.VisType) {
 	frame.Meta.PreferredVisualization = visType
 }
 
-func setSearchWords(frame *data.Frame, searchWords map[string]bool) {
+func setLogsCustomMeta(frame *data.Frame, searchWords map[string]bool, limit int) {
 	i := 0
 	searchWordsList := make([]string, len(searchWords))
 	for searchWord := range searchWords {
@@ -1132,6 +1211,7 @@ func setSearchWords(frame *data.Frame, searchWords map[string]bool) {
 
 	frame.Meta.Custom = map[string]interface{}{
 		"searchWords": searchWordsList,
+		"limit":       limit,
 	}
 }
 
@@ -1252,13 +1332,24 @@ func addOtherMetricsToFields(fields *[]*data.Field, bucket *simplejson.Json, met
 	otherMetrics := make([]*MetricAgg, 0)
 
 	for _, m := range target.Metrics {
-		if m.Type == metric.Type {
+		// To other metrics we add metric of the same type that are not the current metric
+		if m.ID != metric.ID && m.Type == metric.Type {
 			otherMetrics = append(otherMetrics, m)
 		}
 	}
 
-	if len(otherMetrics) > 1 {
+	if len(otherMetrics) > 0 {
 		metricName += " " + metric.Field
+
+		// We check if we have metric with the same type and same field name
+		// If so, append metric.ID to the metric name
+		for _, m := range otherMetrics {
+			if m.Field == metric.Field {
+				metricName += " " + metric.ID
+				break
+			}
+		}
+
 		if metric.Type == "bucket_script" {
 			// Use the formula in the column name
 			metricName = metric.Settings.Get("script").MustString("")

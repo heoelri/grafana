@@ -5,9 +5,9 @@ import Papa, { ParseConfig, Parser, ParseResult } from 'papaparse';
 // Types
 import { MutableDataFrame } from '../dataframe/MutableDataFrame';
 import { guessFieldTypeFromValue } from '../dataframe/processDataFrame';
-import { getFieldDisplayName } from '../field';
-import { DataFrame, Field, FieldConfig, FieldType } from '../types';
-import { formattedValueToString } from '../valueFormats';
+import { getFieldDisplayName } from '../field/fieldState';
+import { DataFrame, Field, FieldConfig, FieldType } from '../types/dataFrame';
+import { formattedValueToString } from '../valueFormats/valueFormats';
 
 export enum CSVHeaderStyle {
   full,
@@ -273,7 +273,8 @@ export function toCSV(data: DataFrame[], config?: CSVConfig): string {
   });
   let csv = config.useExcelHeader ? `sep=${config.delimiter}${config.newline}` : '';
 
-  for (const series of data) {
+  for (let s = 0; s < data.length; s++) {
+    const series = data[s];
     const { fields } = series;
 
     // ignore frames with no fields
@@ -308,15 +309,25 @@ export function toCSV(data: DataFrame[], config?: CSVConfig): string {
             csv = csv + config.delimiter;
           }
 
-          const v = fields[j].values.get(i);
+          let v = fields[j].values[i];
+          // For FieldType frame, use value if it exists to prevent exporting [object object]
+          if (fields[j].type === FieldType.frame && fields[j].values[i].value) {
+            v = fields[j].values[i].value;
+          }
           if (v !== null) {
             csv = csv + writers[j](v);
           }
         }
-        csv = csv + config.newline;
+
+        if (i !== length - 1) {
+          csv = csv + config.newline;
+        }
       }
     }
-    csv = csv + config.newline;
+
+    if (s !== data.length - 1) {
+      csv = csv + config.newline;
+    }
   }
 
   return csv;

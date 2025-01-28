@@ -9,11 +9,12 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/grafana/grafana/pkg/api/dtos"
 	"github.com/grafana/grafana/pkg/api/response"
+	"github.com/grafana/grafana/pkg/apimachinery/errutil"
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/infra/metrics"
 	"github.com/grafana/grafana/pkg/infra/network"
-	"github.com/grafana/grafana/pkg/login"
+	"github.com/grafana/grafana/pkg/middleware"
 	"github.com/grafana/grafana/pkg/middleware/cookies"
 	"github.com/grafana/grafana/pkg/services/auth"
 	"github.com/grafana/grafana/pkg/services/authn"
@@ -25,8 +26,6 @@ import (
 	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/util"
-	"github.com/grafana/grafana/pkg/util/errutil"
-	"github.com/grafana/grafana/pkg/web"
 )
 
 const (
@@ -40,31 +39,39 @@ var getViewIndex = func() string {
 	return viewIndex
 }
 
+var (
+	errAbsoluteRedirectTo  = errors.New("absolute URLs are not allowed for redirect_to cookie value")
+	errInvalidRedirectTo   = errors.New("invalid redirect_to cookie value")
+	errForbiddenRedirectTo = errors.New("forbidden redirect_to cookie value")
+)
+
 func (hs *HTTPServer) ValidateRedirectTo(redirectTo string) error {
 	to, err := url.Parse(redirectTo)
 	if err != nil {
-		return login.ErrInvalidRedirectTo
+		return errInvalidRedirectTo
 	}
+
 	if to.IsAbs() {
-		return login.ErrAbsoluteRedirectTo
+		return errAbsoluteRedirectTo
 	}
 
 	if to.Host != "" {
-		return login.ErrForbiddenRedirectTo
+		return errForbiddenRedirectTo
 	}
 
 	// path should have exactly one leading slash
 	if !strings.HasPrefix(to.Path, "/") {
-		return login.ErrForbiddenRedirectTo
+		return errForbiddenRedirectTo
 	}
+
 	if strings.HasPrefix(to.Path, "//") {
-		return login.ErrForbiddenRedirectTo
+		return errForbiddenRedirectTo
 	}
 
 	// when using a subUrl, the redirect_to should start with the subUrl (which contains the leading slash), otherwise the redirect
 	// will send the user to the wrong location
 	if hs.Cfg.AppSubURL != "" && !strings.HasPrefix(to.Path, hs.Cfg.AppSubURL+"/") {
-		return login.ErrInvalidRedirectTo
+		return errInvalidRedirectTo
 	}
 
 	return nil
@@ -84,16 +91,14 @@ func (hs *HTTPServer) CookieOptionsFromCfg() cookies.CookieOptions {
 }
 
 func (hs *HTTPServer) LoginView(c *contextmodel.ReqContext) {
-	if hs.Features.IsEnabled(featuremgmt.FlagClientTokenRotation) {
-		if errors.Is(c.LookupTokenErr, authn.ErrTokenNeedsRotation) {
-			c.Redirect(hs.Cfg.AppSubURL + "/")
-			return
-		}
+	if errors.Is(c.LookupTokenErr, authn.ErrTokenNeedsRotation) {
+		c.Redirect(hs.Cfg.AppSubURL + "/")
+		return
 	}
 
 	viewData, err := setIndexViewData(hs, c)
 	if err != nil {
-		c.Handle(hs.Cfg, 500, "Failed to get settings", err)
+		c.Handle(hs.Cfg, http.StatusInternalServerError, "Failed to get settings", err)
 		return
 	}
 
@@ -115,13 +120,17 @@ func (hs *HTTPServer) LoginView(c *contextmodel.ReqContext) {
 		return
 	}
 
-	if hs.tryAutoLogin(c) {
+	// If user is not authenticated try auto-login
+	if !c.IsSignedIn && hs.tryAutoLogin(c) {
 		return
 	}
 
 	if c.IsSignedIn {
 		// Assign login token to auth proxy users if enable_login_token = true
-		if hs.Cfg.AuthProxyEnabled && hs.Cfg.AuthProxyEnableLoginToken {
+		// LDAP users authenticated by auth proxy are also assigned login token but their auth module is LDAP
+		if hs.Cfg.AuthProxy.Enabled &&
+			hs.Cfg.AuthProxy.EnableLoginToken &&
+			c.SignedInUser.IsAuthenticatedBy(loginservice.AuthProxyAuthModule, loginservice.LDAPAuthModule) {
 			user := &user.User{ID: c.SignedInUser.UserID, Email: c.SignedInUser.Email, Login: c.SignedInUser.Login}
 			err := hs.loginUserWithUser(user, c)
 			if err != nil {
@@ -130,7 +139,12 @@ func (hs *HTTPServer) LoginView(c *contextmodel.ReqContext) {
 			}
 		}
 
-		c.Redirect(hs.GetRedirectURL(c))
+		if !c.UseSessionStorageRedirect {
+			c.Redirect(hs.GetRedirectURL(c))
+			return
+		}
+
+		c.Redirect(hs.Cfg.AppSubURL + "/")
 		return
 	}
 
@@ -169,6 +183,9 @@ func (hs *HTTPServer) tryAutoLogin(c *contextmodel.ReqContext) bool {
 	for providerName, provider := range oauthInfos {
 		if provider.AutoLogin || hs.Cfg.OAuthAutoLogin {
 			redirectUrl := hs.Cfg.AppSubURL + "/login/" + providerName
+			if hs.Features.IsEnabledGlobally(featuremgmt.FlagUseSessionStorageForRedirection) {
+				redirectUrl += hs.getRedirectToForAutoLogin(c)
+			}
 			c.Logger.Info("OAuth auto login enabled. Redirecting to " + redirectUrl)
 			c.Redirect(redirectUrl, 307)
 			return true
@@ -177,6 +194,9 @@ func (hs *HTTPServer) tryAutoLogin(c *contextmodel.ReqContext) bool {
 
 	if samlAutoLogin {
 		redirectUrl := hs.Cfg.AppSubURL + "/login/saml"
+		if hs.Features.IsEnabledGlobally(featuremgmt.FlagUseSessionStorageForRedirection) {
+			redirectUrl += hs.getRedirectToForAutoLogin(c)
+		}
 		c.Logger.Info("SAML auto login enabled. Redirecting to " + redirectUrl)
 		c.Redirect(redirectUrl, 307)
 		return true
@@ -185,108 +205,61 @@ func (hs *HTTPServer) tryAutoLogin(c *contextmodel.ReqContext) bool {
 	return false
 }
 
+func (hs *HTTPServer) getRedirectToForAutoLogin(c *contextmodel.ReqContext) string {
+	redirectTo := c.Req.FormValue("redirectTo")
+	if hs.Cfg.AppSubURL != "" && strings.HasPrefix(redirectTo, hs.Cfg.AppSubURL) {
+		redirectTo = strings.TrimPrefix(redirectTo, hs.Cfg.AppSubURL)
+	}
+
+	if redirectTo == "/" {
+		return ""
+	}
+
+	// remove any forceLogin=true params
+	redirectTo = middleware.RemoveForceLoginParams(redirectTo)
+	return "?redirectTo=" + url.QueryEscape(redirectTo)
+}
+
 func (hs *HTTPServer) LoginAPIPing(c *contextmodel.ReqContext) response.Response {
 	if c.IsSignedIn || c.IsAnonymous {
 		return response.JSON(http.StatusOK, util.DynMap{"message": "Logged in"})
 	}
 
-	return response.Error(401, "Unauthorized", nil)
+	return response.Error(http.StatusUnauthorized, "Unauthorized", nil)
 }
 
 func (hs *HTTPServer) LoginPost(c *contextmodel.ReqContext) response.Response {
-	if hs.Features.IsEnabled(featuremgmt.FlagAuthnService) {
-		identity, err := hs.authnService.Login(c.Req.Context(), authn.ClientForm, &authn.Request{HTTPRequest: c.Req, Resp: c.Resp})
-		if err != nil {
-			tokenErr := &auth.CreateTokenErr{}
-			if errors.As(err, &tokenErr) {
-				return response.Error(tokenErr.StatusCode, tokenErr.ExternalErr, tokenErr.InternalErr)
-			}
-			return response.Err(err)
-		}
-
-		metrics.MApiLoginPost.Inc()
-		return authn.HandleLoginResponse(c.Req, c.Resp, hs.Cfg, identity, hs.ValidateRedirectTo)
-	}
-
-	cmd := dtos.LoginCommand{}
-	if err := web.Bind(c.Req, &cmd); err != nil {
-		return response.Error(http.StatusBadRequest, "bad login data", err)
-	}
-	authModule := ""
-	var usr *user.User
-	var resp *response.NormalResponse
-
-	defer func() {
-		err := resp.Err()
-		if err == nil && resp.ErrMessage() != "" {
-			err = errors.New(resp.ErrMessage())
-		}
-		hs.HooksService.RunLoginHook(&loginservice.LoginInfo{
-			AuthModule:    authModule,
-			User:          usr,
-			LoginUsername: cmd.User,
-			HTTPStatus:    resp.Status(),
-			Error:         err,
-		}, c)
-	}()
-
-	if hs.Cfg.DisableLoginForm {
-		resp = response.Error(http.StatusUnauthorized, "Login is disabled", nil)
-		return resp
-	}
-
-	authQuery := &loginservice.LoginUserQuery{
-		ReqContext: c,
-		Username:   cmd.User,
-		Password:   cmd.Password,
-		IpAddress:  c.RemoteAddr(),
-		Cfg:        hs.Cfg,
-	}
-
-	err := hs.authenticator.AuthenticateUser(c.Req.Context(), authQuery)
-	authModule = authQuery.AuthModule
+	identity, err := hs.authnService.Login(c.Req.Context(), authn.ClientForm, &authn.Request{HTTPRequest: c.Req})
 	if err != nil {
-		resp = response.Error(401, "Invalid username or password", err)
-		if errors.Is(err, login.ErrInvalidCredentials) || errors.Is(err, login.ErrTooManyLoginAttempts) || errors.Is(err,
-			user.ErrUserNotFound) {
-			return resp
+		tokenErr := &auth.CreateTokenErr{}
+		if errors.As(err, &tokenErr) {
+			return response.Error(tokenErr.StatusCode, tokenErr.ExternalErr, tokenErr.InternalErr)
 		}
-
-		if errors.Is(err, login.ErrNoAuthProvider) {
-			resp = response.Error(http.StatusInternalServerError, "No authorization providers enabled", err)
-			return resp
-		}
-
-		// Do not expose disabled status,
-		// just show incorrect user credentials error (see #17947)
-		if errors.Is(err, login.ErrUserDisabled) {
-			hs.log.Warn("User is disabled", "user", cmd.User)
-			return resp
-		}
-
-		resp = response.Error(500, "Error while trying to authenticate user", err)
-		return resp
-	}
-
-	usr = authQuery.User
-
-	err = hs.loginUserWithUser(usr, c)
-	if err != nil {
-		var createTokenErr *auth.CreateTokenErr
-		if errors.As(err, &createTokenErr) {
-			resp = response.Error(createTokenErr.StatusCode, createTokenErr.ExternalErr, createTokenErr.InternalErr)
-		} else {
-			resp = response.Error(http.StatusInternalServerError, "Error while signing in user", err)
-		}
-		return resp
+		return response.Err(err)
 	}
 
 	metrics.MApiLoginPost.Inc()
-	resp = response.JSON(http.StatusOK, map[string]any{
-		"message":     "Logged in",
-		"redirectUrl": hs.GetRedirectURL(c),
-	})
-	return resp
+	return authn.HandleLoginResponse(c.Req, c.Resp, hs.Cfg, identity, hs.ValidateRedirectTo, hs.Features)
+}
+
+func (hs *HTTPServer) LoginPasswordless(c *contextmodel.ReqContext) response.Response {
+	identity, err := hs.authnService.Login(c.Req.Context(), authn.ClientPasswordless, &authn.Request{HTTPRequest: c.Req})
+	if err != nil {
+		tokenErr := &auth.CreateTokenErr{}
+		if errors.As(err, &tokenErr) {
+			return response.Error(tokenErr.StatusCode, tokenErr.ExternalErr, tokenErr.InternalErr)
+		}
+		return response.Err(err)
+	}
+	return authn.HandleLoginResponse(c.Req, c.Resp, hs.Cfg, identity, hs.ValidateRedirectTo, hs.Features)
+}
+
+func (hs *HTTPServer) StartPasswordless(c *contextmodel.ReqContext) {
+	redirect, err := hs.authnService.RedirectURL(c.Req.Context(), authn.ClientPasswordless, &authn.Request{HTTPRequest: c.Req})
+	if err != nil {
+		c.Redirect(hs.redirectURLWithErrorCookie(c, err))
+	}
+	c.JSON(http.StatusOK, redirect)
 }
 
 func (hs *HTTPServer) loginUserWithUser(user *user.User, c *contextmodel.ReqContext) error {
@@ -303,7 +276,7 @@ func (hs *HTTPServer) loginUserWithUser(user *user.User, c *contextmodel.ReqCont
 
 	hs.log.Debug("Got IP address from client address", "addr", addr, "ip", ip)
 	ctx := context.WithValue(c.Req.Context(), loginservice.RequestURIKey{}, c.Req.RequestURI)
-	userToken, err := hs.AuthTokenService.CreateToken(ctx, user, ip, c.Req.UserAgent())
+	userToken, err := hs.AuthTokenService.CreateToken(ctx, &auth.CreateTokenCommand{User: user, ClientIP: ip, UserAgent: c.Req.UserAgent()})
 	if err != nil {
 		return fmt.Errorf("%v: %w", "failed to create auth token", err)
 	}
@@ -315,37 +288,25 @@ func (hs *HTTPServer) loginUserWithUser(user *user.User, c *contextmodel.ReqCont
 }
 
 func (hs *HTTPServer) Logout(c *contextmodel.ReqContext) {
-	// If SAML is enabled and this is a SAML user use saml logout
+	// FIXME: restructure saml client to implement authn.LogoutClient
 	if hs.samlSingleLogoutEnabled() {
-		getAuthQuery := loginservice.GetAuthInfoQuery{UserId: c.UserID}
-		if authInfo, err := hs.authInfoService.GetAuthInfo(c.Req.Context(), &getAuthQuery); err == nil {
-			if authInfo.AuthModule == loginservice.SAMLAuthModule {
-				c.Redirect(hs.Cfg.AppSubURL + "/logout/saml")
-				return
-			}
+		if c.SignedInUser.GetAuthenticatedBy() == loginservice.SAMLAuthModule {
+			c.Redirect(hs.Cfg.AppSubURL + "/logout/saml")
+			return
 		}
 	}
 
-	// Invalidate the OAuth tokens in case the User logged in with OAuth or the last external AuthEntry is an OAuth one
-	if entry, exists, _ := hs.oauthTokenService.HasOAuthEntry(c.Req.Context(), c.SignedInUser); exists {
-		if err := hs.oauthTokenService.InvalidateOAuthTokens(c.Req.Context(), entry); err != nil {
-			hs.log.Warn("failed to invalidate oauth tokens for user", "userId", c.UserID, "error", err)
-		}
-	}
-
-	err := hs.AuthTokenService.RevokeToken(c.Req.Context(), c.UserToken, false)
-	if err != nil && !errors.Is(err, auth.ErrUserTokenNotFound) {
-		hs.log.Error("failed to revoke auth token", "error", err)
-	}
-
+	redirect, err := hs.authnService.Logout(c.Req.Context(), c.SignedInUser, c.UserToken)
 	authn.DeleteSessionCookie(c.Resp, hs.Cfg)
 
-	if setting.SignoutRedirectUrl != "" {
-		c.Redirect(setting.SignoutRedirectUrl)
-	} else {
-		hs.log.Info("Successful Logout", "User", c.Email)
+	if err != nil {
+		hs.log.Error("Failed perform proper logout", "error", err)
 		c.Redirect(hs.Cfg.AppSubURL + "/login")
+		return
 	}
+
+	hs.log.Info("Successful Logout", "id", c.SignedInUser.GetID())
+	c.Redirect(redirect.URL)
 }
 
 func (hs *HTTPServer) tryGetEncryptedCookie(ctx *contextmodel.ReqContext, cookieName string) (string, bool) {
@@ -369,17 +330,17 @@ func (hs *HTTPServer) trySetEncryptedCookie(ctx *contextmodel.ReqContext, cookie
 		return err
 	}
 
-	cookies.WriteCookie(ctx.Resp, cookieName, hex.EncodeToString(encryptedError), 60, hs.CookieOptionsFromCfg)
+	cookies.WriteCookie(ctx.Resp, cookieName, hex.EncodeToString(encryptedError), maxAge, hs.CookieOptionsFromCfg)
 
 	return nil
 }
 
-func (hs *HTTPServer) redirectWithError(c *contextmodel.ReqContext, err error, v ...interface{}) {
+func (hs *HTTPServer) redirectWithError(c *contextmodel.ReqContext, err error, v ...any) {
 	c.Logger.Warn(err.Error(), v...)
 	c.Redirect(hs.redirectURLWithErrorCookie(c, err))
 }
 
-func (hs *HTTPServer) RedirectResponseWithError(c *contextmodel.ReqContext, err error, v ...interface{}) *response.RedirectResponse {
+func (hs *HTTPServer) RedirectResponseWithError(c *contextmodel.ReqContext, err error, v ...any) *response.RedirectResponse {
 	c.Logger.Error(err.Error(), v...)
 	location := hs.redirectURLWithErrorCookie(c, err)
 	return response.Redirect(location)
@@ -387,8 +348,17 @@ func (hs *HTTPServer) RedirectResponseWithError(c *contextmodel.ReqContext, err 
 
 func (hs *HTTPServer) redirectURLWithErrorCookie(c *contextmodel.ReqContext, err error) string {
 	setCookie := true
-	if hs.Features.IsEnabled(featuremgmt.FlagIndividualCookiePreferences) {
-		prefsQuery := pref.GetPreferenceWithDefaultsQuery{UserID: c.UserID, OrgID: c.OrgID, Teams: c.Teams}
+	if hs.Features.IsEnabled(c.Req.Context(), featuremgmt.FlagIndividualCookiePreferences) {
+		var userID int64
+		if c.SignedInUser != nil && !c.SignedInUser.IsNil() {
+			var errID error
+			userID, errID = identity.UserIdentifier(c.SignedInUser.GetID())
+			if errID != nil {
+				hs.log.Error("failed to retrieve user ID", "error", errID)
+			}
+		}
+
+		prefsQuery := pref.GetPreferenceWithDefaultsQuery{UserID: userID, OrgID: c.SignedInUser.GetOrgID(), Teams: c.Teams}
 		prefs, err := hs.preferenceService.GetWithDefaults(c.Req.Context(), &prefsQuery)
 		if err != nil {
 			c.Redirect(hs.Cfg.AppSubURL + "/login")
@@ -406,19 +376,47 @@ func (hs *HTTPServer) redirectURLWithErrorCookie(c *contextmodel.ReqContext, err
 }
 
 func (hs *HTTPServer) samlEnabled() bool {
-	return hs.SettingsProvider.KeyValue("auth.saml", "enabled").MustBool(false) && hs.License.FeatureEnabled("saml")
+	return hs.authnService.IsClientEnabled(authn.ClientSAML)
 }
 
 func (hs *HTTPServer) samlName() string {
-	return hs.SettingsProvider.KeyValue("auth.saml", "name").MustString("SAML")
+	config, ok := hs.authnService.GetClientConfig(authn.ClientSAML)
+	if !ok {
+		return ""
+	}
+	return config.GetDisplayName()
 }
 
 func (hs *HTTPServer) samlSingleLogoutEnabled() bool {
-	return hs.samlEnabled() && hs.SettingsProvider.KeyValue("auth.saml", "single_logout").MustBool(false) && hs.samlEnabled()
+	config, ok := hs.authnService.GetClientConfig(authn.ClientSAML)
+	if !ok {
+		return false
+	}
+	return hs.samlEnabled() && config.IsSingleLogoutEnabled()
 }
 
 func (hs *HTTPServer) samlAutoLoginEnabled() bool {
-	return hs.samlEnabled() && hs.SettingsProvider.KeyValue("auth.saml", "auto_login").MustBool(false)
+	config, ok := hs.authnService.GetClientConfig(authn.ClientSAML)
+	if !ok {
+		return false
+	}
+	return hs.samlEnabled() && config.IsAutoLoginEnabled()
+}
+
+func (hs *HTTPServer) samlSkipOrgRoleSyncEnabled() bool {
+	config, ok := hs.authnService.GetClientConfig(authn.ClientSAML)
+	if !ok {
+		return false
+	}
+	return hs.samlEnabled() && config.IsSkipOrgRoleSyncEnabled()
+}
+
+func (hs *HTTPServer) samlAllowAssignGrafanaAdminEnabled() bool {
+	config, ok := hs.authnService.GetClientConfig(authn.ClientSAML)
+	if !ok {
+		return false
+	}
+	return hs.samlEnabled() && config.IsAllowAssignGrafanaAdminEnabled()
 }
 
 func getLoginExternalError(err error) string {
@@ -427,10 +425,99 @@ func getLoginExternalError(err error) string {
 		return createTokenErr.ExternalErr
 	}
 
+	// unwrap until we get to the error message
 	gfErr := &errutil.Error{}
 	if errors.As(err, gfErr) {
-		return gfErr.Public().Message
+		return getFirstPublicErrorMessage(gfErr)
 	}
 
 	return err.Error()
+}
+
+// Get the first public error message from an error chain.
+func getFirstPublicErrorMessage(err *errutil.Error) string {
+	errPublic := err.Public()
+	if err.PublicMessage != "" {
+		return errPublic.Message
+	}
+
+	underlyingErr := &errutil.Error{}
+	if err.Underlying != nil && errors.As(err.Underlying, underlyingErr) {
+		return getFirstPublicErrorMessage(underlyingErr)
+	}
+
+	return errPublic.Message
+}
+
+// isExternalySynced is used to tell if the user roles are externally synced
+// true means that the org role sync is handled by Grafana
+// Note: currently the users authinfo is overridden each time the user logs in
+// https://github.com/grafana/grafana/blob/4181acec72f76df7ad02badce13769bae4a1f840/pkg/services/login/authinfoservice/database/database.go#L61
+// this means that if the user has multiple auth providers and one of them is set to sync org roles
+// then isExternallySynced will be true for this one provider and false for the others
+func (hs *HTTPServer) isExternallySynced(cfg *setting.Cfg, authModule string) bool {
+	// provider enabled in config
+	if !hs.isProviderEnabled(cfg, authModule) {
+		return false
+	}
+	// first check SAML, LDAP and JWT
+	switch authModule {
+	case loginservice.SAMLAuthModule:
+		return !hs.samlSkipOrgRoleSyncEnabled()
+	case loginservice.LDAPAuthModule:
+		return !cfg.LDAPSkipOrgRoleSync
+	case loginservice.JWTModule:
+		return !cfg.JWTAuth.SkipOrgRoleSync
+	}
+	switch authModule {
+	case loginservice.GoogleAuthModule, loginservice.OktaAuthModule, loginservice.AzureADAuthModule, loginservice.GitLabAuthModule, loginservice.GithubAuthModule, loginservice.GrafanaComAuthModule, loginservice.GenericOAuthModule:
+		config, ok := hs.authnService.GetClientConfig(oauthModuleToAuthnClient(authModule))
+		if !ok {
+			return false
+		}
+		return !config.IsSkipOrgRoleSyncEnabled()
+	}
+	return true
+}
+
+// isGrafanaAdminExternallySynced returns true if Grafana server admin role is being managed by an external auth provider, and false otherwise.
+// Grafana admin role sync is available for JWT, OAuth providers and LDAP.
+// For JWT and OAuth providers there is an additional config option `allow_assign_grafana_admin` that has to be enabled for Grafana Admin role to be synced.
+func (hs *HTTPServer) isGrafanaAdminExternallySynced(cfg *setting.Cfg, authModule string) bool {
+	if !hs.isExternallySynced(cfg, authModule) {
+		return false
+	}
+
+	switch authModule {
+	case loginservice.JWTModule:
+		return cfg.JWTAuth.AllowAssignGrafanaAdmin
+	case loginservice.SAMLAuthModule:
+		return hs.samlAllowAssignGrafanaAdminEnabled()
+	case loginservice.LDAPAuthModule:
+		return true
+	default:
+		config, ok := hs.authnService.GetClientConfig(oauthModuleToAuthnClient(authModule))
+		if !ok {
+			return false
+		}
+		return config.IsAllowAssignGrafanaAdminEnabled()
+	}
+}
+
+func (hs *HTTPServer) isProviderEnabled(cfg *setting.Cfg, authModule string) bool {
+	switch authModule {
+	case loginservice.SAMLAuthModule:
+		return hs.authnService.IsClientEnabled(authn.ClientSAML)
+	case loginservice.LDAPAuthModule:
+		return cfg.LDAPAuthEnabled
+	case loginservice.JWTModule:
+		return cfg.JWTAuth.Enabled
+	case loginservice.GoogleAuthModule, loginservice.OktaAuthModule, loginservice.AzureADAuthModule, loginservice.GitLabAuthModule, loginservice.GithubAuthModule, loginservice.GrafanaComAuthModule, loginservice.GenericOAuthModule:
+		return hs.authnService.IsClientEnabled(oauthModuleToAuthnClient(authModule))
+	}
+	return false
+}
+
+func oauthModuleToAuthnClient(authModule string) string {
+	return authn.ClientWithPrefix(strings.TrimPrefix(authModule, "oauth_"))
 }

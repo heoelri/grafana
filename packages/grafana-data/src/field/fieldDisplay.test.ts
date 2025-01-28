@@ -1,12 +1,13 @@
 import { merge } from 'lodash';
 
 import { toDataFrame } from '../dataframe/processDataFrame';
-import { createTheme } from '../themes';
+import { createTheme } from '../themes/createTheme';
 import { ReducerID } from '../transformations/fieldReducer';
-import { FieldConfigPropertyItem, MappingType, SpecialValueMatch, ValueMapping } from '../types';
+import { FieldConfigPropertyItem } from '../types/fieldOverrides';
+import { MappingType, SpecialValueMatch, ValueMapping } from '../types/valueMapping';
 
 import { getDisplayProcessor } from './displayProcessor';
-import { getFieldDisplayValues, GetFieldDisplayValuesOptions } from './fieldDisplay';
+import { fixCellTemplateExpressions, getFieldDisplayValues, GetFieldDisplayValuesOptions } from './fieldDisplay';
 import { standardFieldConfigEditorRegistry } from './standardFieldConfigEditorRegistry';
 
 describe('FieldDisplay', () => {
@@ -508,8 +509,25 @@ function createEmptyDisplayOptions(extend = {}): GetFieldDisplayValuesOptions {
 }
 
 function createDisplayOptions(extend: Partial<GetFieldDisplayValuesOptions> = {}): GetFieldDisplayValuesOptions {
-  const options: GetFieldDisplayValuesOptions = {
-    data: [
+  const options = merge(
+    {
+      replaceVariables: (value: string) => {
+        return value;
+      },
+      reduceOptions: {
+        calcs: [],
+      },
+      fieldConfig: {
+        overrides: [],
+        defaults: {},
+      },
+      theme: createTheme(),
+    },
+    extend
+  );
+
+  if (!options.data?.length) {
+    options.data = [
       toDataFrame({
         name: 'Series Name',
         fields: [
@@ -518,19 +536,23 @@ function createDisplayOptions(extend: Partial<GetFieldDisplayValuesOptions> = {}
           { name: 'Field 3', values: [2, 4, 6] },
         ],
       }),
-    ],
-    replaceVariables: (value: string) => {
-      return value;
-    },
-    reduceOptions: {
-      calcs: [],
-    },
-    fieldConfig: {
-      overrides: [],
-      defaults: {},
-    },
-    theme: createTheme(),
-  };
-
-  return merge(options, extend);
+    ];
+  }
+  return options;
 }
+
+describe('fixCellTemplateExpressions', () => {
+  it('Should replace __cell_x correctly', () => {
+    expect(fixCellTemplateExpressions('$__cell_10 asd ${__cell_15} asd [[__cell_20]]')).toEqual(
+      '${__data.fields[10]} asd ${__data.fields[15]} asd ${__data.fields[20]}'
+    );
+  });
+
+  it('Should handle date formatting', () => {
+    expect(
+      fixCellTemplateExpressions('$__cell_10:date:iso asd ${__cell_15:date:seconds} asd [[__cell_20:date:YYYY-MM]]')
+    ).toEqual(
+      '${__data.fields[10]:date:iso} asd ${__data.fields[15]:date:seconds} asd ${__data.fields[20]:date:YYYY-MM}'
+    );
+  });
+});

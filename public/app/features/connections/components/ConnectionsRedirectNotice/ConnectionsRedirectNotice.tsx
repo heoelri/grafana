@@ -1,51 +1,47 @@
 import { css } from '@emotion/css';
-import React from 'react';
+import { useState } from 'react';
 
 import { GrafanaTheme2 } from '@grafana/data';
 import { Alert, LinkButton, useStyles2 } from '@grafana/ui';
 
+import { contextSrv } from '../../../../core/core';
+import { AccessControlAction } from '../../../../types';
 import { ROUTES } from '../../constants';
 
 const getStyles = (theme: GrafanaTheme2) => ({
-  alertContent: css`
-    display: flex;
-    flex-direction: row;
-    padding: 0;
-    justify-content: space-between;
-    align-items: center;
-  `,
-  alertParagraph: css`
-    margin: 0 ${theme.spacing(1)} 0 0;
-    line-height: ${theme.spacing(theme.components.height.sm)};
-    color: ${theme.colors.text.primary};
-  `,
+  alertContent: css({
+    display: 'flex',
+    flexDirection: 'row',
+    padding: 0,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  }),
+  alertParagraph: css({
+    margin: theme.spacing(0, 1, 0, 0),
+    lineHeight: theme.spacing(theme.components.height.sm),
+  }),
 });
 
-export enum DestinationPage {
-  dataSources = 'dataSources',
-  connectData = 'connectData',
-}
-
-const destinationLinks = {
-  [DestinationPage.dataSources]: ROUTES.DataSources,
-  // Set category filter for the cloud version of ConnectData page
-  [DestinationPage.connectData]: `${ROUTES.ConnectData}?cat=data-source`,
-};
-
-export function ConnectionsRedirectNotice({ destinationPage }: { destinationPage: DestinationPage }) {
+export function ConnectionsRedirectNotice() {
   const styles = useStyles2(getStyles);
+  const canAccessDataSources =
+    contextSrv.hasPermission(AccessControlAction.DataSourcesCreate) ||
+    contextSrv.hasPermission(AccessControlAction.DataSourcesWrite);
+  const [showNotice, setShowNotice] = useState(canAccessDataSources);
 
-  return (
-    <Alert severity="warning" title="">
+  return showNotice ? (
+    <Alert severity="info" title="" onRemove={() => setShowNotice(false)}>
       <div className={styles.alertContent}>
         <p className={styles.alertParagraph}>
-          Data sources have a new home! You can discover new data sources or manage existing ones in the new Connections
-          page, accessible from the lefthand nav.
+          Data sources have a new home! You can discover new data sources or manage existing ones in the Connections
+          page, accessible from the main menu.
         </p>
-        <LinkButton aria-label="Link to Connections" icon="adjust-circle" href={destinationLinks[destinationPage]}>
-          See data sources in Connections
+        <LinkButton aria-label="Link to Connections" icon="arrow-right" href={ROUTES.DataSources} fill="text">
+          Go to connections
         </LinkButton>
       </div>
     </Alert>
+  ) : (
+    <></>
   );
 }

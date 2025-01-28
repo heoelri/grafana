@@ -191,7 +191,9 @@ func getNonFolderDashboardDoc(dash dashboard, location string) *bluge.Document {
 func getDashboardPanelDocs(dash dashboard, location string) []*bluge.Document {
 	dashURL := fmt.Sprintf("/d/%s/%s", dash.uid, slugify.Slugify(dash.summary.Name))
 
-	var docs []*bluge.Document
+	// pre-allocating a little bit more than necessary, possibly
+	docs := make([]*bluge.Document, 0, len(dash.summary.Nested))
+
 	for _, panel := range dash.summary.Nested {
 		if panel.Fields["type"] == "row" {
 			continue // skip rows
@@ -239,7 +241,7 @@ func getDashboardPanelDocs(dash dashboard, location string) []*bluge.Document {
 }
 
 // Names need to be indexed a few ways to support key features
-func newSearchDocument(uid string, name string, descr string, url string) *bluge.Document {
+func newSearchDocument(uid, name, descr, url string) *bluge.Document {
 	doc := bluge.NewDocument(uid)
 
 	if name != "" {
@@ -380,7 +382,7 @@ func doSearchQuery(
 
 	reader, cancel, err := index.readerForIndex(indexTypeDashboard)
 	if err != nil {
-		logger.Error("error getting reader for dashboard index: %v", err)
+		logger.Error("Error getting reader for dashboard index: %v", err)
 		response.Error = err
 		return response
 	}
@@ -432,6 +434,12 @@ func doSearchQuery(
 	// Datasource
 	if q.Datasource != "" {
 		fullQuery.AddMust(bluge.NewTermQuery(q.Datasource).SetField(documentFieldDSUID))
+		hasConstraints = true
+	}
+
+	// DatasourceType
+	if q.DatasourceType != "" {
+		fullQuery.AddMust(bluge.NewTermQuery(q.DatasourceType).SetField(documentFieldDSType))
 		hasConstraints = true
 	}
 
@@ -493,7 +501,7 @@ func doSearchQuery(
 	// execute this search on the reader
 	documentMatchIterator, err := reader.Search(ctx, req)
 	if err != nil {
-		logger.Error("error executing search", "err", err)
+		logger.Error("Error executing search", "err", err)
 		response.Error = err
 		return response
 	}
@@ -575,7 +583,7 @@ func doSearchQuery(
 			return true
 		})
 		if err != nil {
-			logger.Error("error loading stored fields", "err", err)
+			logger.Error("Error loading stored fields", "err", err)
 			response.Error = err
 			return response
 		}

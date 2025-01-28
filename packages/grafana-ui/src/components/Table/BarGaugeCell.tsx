@@ -1,22 +1,13 @@
 import { isFunction } from 'lodash';
-import React from 'react';
 
-import {
-  ThresholdsConfig,
-  ThresholdsMode,
-  VizOrientation,
-  getFieldConfigWithMinMax,
-  DisplayValueAlignmentFactors,
-  Field,
-  DisplayValue,
-} from '@grafana/data';
-import { BarGaugeDisplayMode, BarGaugeValueMode } from '@grafana/schema';
+import { ThresholdsConfig, ThresholdsMode, VizOrientation, getFieldConfigWithMinMax } from '@grafana/data';
+import { BarGaugeDisplayMode, BarGaugeValueMode, TableCellDisplayMode } from '@grafana/schema';
 
 import { BarGauge } from '../BarGauge/BarGauge';
 import { DataLinksContextMenu, DataLinksContextMenuApi } from '../DataLinks/DataLinksContextMenu';
 
-import { TableCellProps, TableCellDisplayMode } from './types';
-import { getCellOptions } from './utils';
+import { TableCellProps } from './types';
+import { getAlignmentFactor, getCellOptions } from './utils';
 
 const defaultScale: ThresholdsConfig = {
   mode: ThresholdsMode.Absolute,
@@ -33,7 +24,7 @@ const defaultScale: ThresholdsConfig = {
 };
 
 export const BarGaugeCell = (props: TableCellProps) => {
-  const { field, innerWidth, tableStyles, cell, cellProps, row } = props;
+  const { field, innerWidth, tableStyles, cell, cellProps, row, actions } = props;
   const displayValue = field.display!(cell.value);
   const cellOptions = getCellOptions(field);
 
@@ -65,6 +56,7 @@ export const BarGaugeCell = (props: TableCellProps) => {
   };
 
   const hasLinks = Boolean(getLinks().length);
+  const hasActions = Boolean(actions?.length);
   const alignmentFactors = getAlignmentFactor(field, displayValue, cell.row.index);
 
   const renderComponent = (menuProps: DataLinksContextMenuApi) => {
@@ -93,49 +85,13 @@ export const BarGaugeCell = (props: TableCellProps) => {
 
   return (
     <div {...cellProps} className={tableStyles.cellContainer}>
-      {hasLinks && (
-        <DataLinksContextMenu links={getLinks} style={{ display: 'flex', width: '100%' }}>
+      {hasLinks || hasActions ? (
+        <DataLinksContextMenu links={getLinks} actions={actions} style={{ display: 'flex', width: '100%' }}>
           {(api) => renderComponent(api)}
         </DataLinksContextMenu>
+      ) : (
+        renderComponent({})
       )}
-      {!hasLinks && renderComponent({})}
     </div>
   );
 };
-
-/**
- * Getting gauge values to align is very tricky without looking at all values and passing them trough display processor. For very large tables that
- * could pretty expensive. So this is kind of a compromise. We look at the first 1000 rows and cache the longest value.
- * If we have a cached value we just check if the current value is longer and update the alignmentFactor. This can obviously still lead to
- * unaligned gauges but it should a lot less common.
- **/
-function getAlignmentFactor(field: Field, displayValue: DisplayValue, rowIndex: number): DisplayValueAlignmentFactors {
-  let alignmentFactor = field.state?.alignmentFactors;
-
-  if (alignmentFactor) {
-    // check if current alignmentFactor is still the longest
-    if (alignmentFactor.text.length < displayValue.text.length) {
-      alignmentFactor.text = displayValue.text;
-    }
-    return alignmentFactor;
-  } else {
-    // look at the next 100 rows
-    alignmentFactor = { ...displayValue };
-    const maxIndex = Math.min(field.values.length, rowIndex + 1000);
-
-    for (let i = rowIndex + 1; i < maxIndex; i++) {
-      const nextDisplayValue = field.display!(field.values.get(i));
-      if (nextDisplayValue.text.length > alignmentFactor.text.length) {
-        alignmentFactor.text = displayValue.text;
-      }
-    }
-
-    if (field.state) {
-      field.state.alignmentFactors = alignmentFactor;
-    } else {
-      field.state = { alignmentFactors: alignmentFactor };
-    }
-
-    return alignmentFactor;
-  }
-}

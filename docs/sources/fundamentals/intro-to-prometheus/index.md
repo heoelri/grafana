@@ -1,6 +1,7 @@
 ---
 aliases:
   - ../basics/timeseries/
+  - /docs/grafana-cloud/introduction/prometheus/
 description: Introduction to Prometheus
 keywords:
   - grafana
@@ -8,15 +9,31 @@ keywords:
   - Prometheus
   - metrics
   - time series
+labels:
+  products:
+    - cloud
+    - enterprise
+    - oss
 title: What is Prometheus?
 weight: 300
+refs:
+  prometheus:
+    - pattern: /docs/grafana/
+      destination: /docs/grafana/<GRAFANA_VERSION>/datasources/prometheus/
+    - pattern: /docs/grafana-cloud/
+      destination: /docs/grafana/<GRAFANA_VERSION>/datasources/prometheus/
+  build-dashboards:
+    - pattern: /docs/grafana/
+      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/build-dashboards/
+    - pattern: /docs/grafana-cloud/
+      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/build-dashboards/
 ---
 
 # What is Prometheus?
 
-Observability focuses on understanding the internal state of your systems based on the data they produce, which helps determine if your infrastructure is healthy. Prometheus is a core technology for system observability, but the term "Prometheus" can be confusing because it is used in different contexts. Understanding Prometheus basics, why it’s valuable for system observability, and how people use it in practice will both help you better understand it and help you use Grafana.
+Observability focuses on understanding the internal state of your systems based on the data they produce, which helps determine if your infrastructure is healthy. Prometheus is a core technology for monitoring and observability of systems, but the term "Prometheus" can be confusing because it is used in different contexts. Understanding Prometheus basics, why it’s valuable for system observability, and how users use it in practice will both help you better understand it and help you use Grafana.
 
-Prometheus began in 2012 at SoundCloud because existing technologies were insufficient for their observability needs. Prometheus offers both a robust data model and a query language, which are discussed on this page. Prometheus is also simple and scalable. In 2018, Prometheus graduated from Cloud Native Computing Foundation (CNCF) incubation, and today has a thriving community.
+Prometheus began in 2012 at SoundCloud because existing technologies were insufficient for their observability needs. Prometheus offers both a robust data model and a query language. Prometheus is also simple and scalable. In 2018, Prometheus graduated from Cloud Native Computing Foundation (CNCF) incubation, and today has a thriving community.
 
 ## Prometheus as data
 
@@ -31,7 +48,7 @@ Prometheus is a technology that collects and stores time series data. Time serie
 - _metrics_ that consist of a _timestamp_ and a _sample_, which is the numeric value, such as how many disk bytes have been read or a stock price
 - a set of labels called _dimensions_, for example, `job` and `device`
 
-You can store time series data in any relational database, but these kinds of systems are not developed to store and query large volumes of time series data. Prometheus and similar software provide tools to compact and optimize time series data.
+You can store time series data in any relational database, however, these systems are not developed to store and query large volumes of time series data. Prometheus and similar software provide tools to compact and optimize time series data.
 
 ### Simple dashboard using PromQL
 
@@ -59,7 +76,7 @@ The following gauge visualization displays the total RAM usage on a computer.
 
 The third metric type is called a `histogram`, which counts observations and organizes them into configurable groups. The following example displays floating-point numbers grouped into ranges that display how frequently each occurred.
 
-{{< figure src="/media/docs/grafana/intro-prometheus/histogram-example.png" max-width="750px" caption="Historgram visualization" >}}
+{{< figure src="/media/docs/grafana/intro-prometheus/histogram-example.png" max-width="750px" caption="Histogram visualization" >}}
 
 These core concepts of time series, metrics, labels, and aggregation functions are foundational to Grafana and observability.
 
@@ -89,22 +106,22 @@ The following image shows the two metrics associated with the endpoint. The HELP
 
 The 'MyApp' metrics are available in an HTTP endpoint, but how do they get to Grafana, and subsequently, into a dashboard? The process of recording and transmitting the readings of an application or piece of infrastructure is known as _telemetry_. Telemetry is critical to observability because it helps you understand exactly what's going on in your infrastructure. The metrics introduced previously, for example, `MyAppnodejs_active_requests_total`, are telemetry data.
 
-To get metrics into Grafana, you can use either the Prometheus software or [Grafana Agent](/docs/agent/latest/) to scrape metrics. Grafana Agent collects and forwards the telemetry data to open-source deployments of the Grafana Stack, Grafana Cloud, or Grafana Enterprise, where your data can be analyzed. For example, you can configure Grafana Agent to pull the data from 'MyApp' every five seconds and send the results to Grafana Cloud.
+To get metrics into Grafana, you can use either the Prometheus software or [Grafana Alloy](https://grafana.com/docs/alloy/latest/) to scrape metrics. Grafana Alloy collects and forwards the telemetry data to open-source deployments of the Grafana Stack, Grafana Cloud, or Grafana Enterprise, where your data can be analyzed. For example, you can configure Grafana Alloy to pull the data from 'MyApp' every five seconds and send the results to Grafana Cloud.
 
-Metrics data is only one type of telemetry data; the other kinds are logs and traces. Using Grafana Agent can be a great option to send telemetry data because as you scale your observability practices to include logs and traces, which Grafana Agent also supports, you've got a solution already in place.
+Metrics data is only one type of telemetry data; the other kinds are logs and traces. Using Grafana Alloy can be a great option to send telemetry data because as you scale your observability practices to include logs and traces, which Grafana Alloy also supports, you've got a solution already in place.
 
-The following image illustrates how Grafana Agent works as an intermediary between 'MyApp' and Grafana Cloud.
+The following image illustrates how Grafana Alloy works as an intermediary between 'MyApp' and Grafana Cloud.
 
-{{< figure src="/media/docs/grafana/intro-prometheus/grafana-agent.png" max-width="750px" caption="Grafana Agent" >}}
+{{< figure src="/media/docs/alloy/flow-diagram-small-alloy.png" alt="Grafana Alloy" caption="Grafana Alloy" >}}
 
 ## Bringing it together
 
-The combination of Prometheus and Grafana Agent gives you control over the metrics you want to report, where they come from, and where they’re going. Once the data is in Grafana, it can be stored in a Grafana Mimir database. Grafana dashboards consist of visualizations populated by data queried from the Prometheus data source. The PromQL query filters and aggregates the data to provide you the insight you need. With those steps, we’ve gone from raw numbers, generated by software, into Prometheus, delivered to Grafana, queried by PromQL, and visualized by Grafana.
+The combination of Prometheus and Grafana Alloy gives you control over the metrics you want to report, where they come from, and where they’re going. Once the data is in Grafana, it can be stored in a Grafana Mimir database. Grafana dashboards consist of visualizations populated by data queried from the Prometheus data source. The PromQL query filters and aggregates the data to provide you the insight you need. With those steps, we’ve gone from raw numbers, generated by software, into Prometheus, delivered to Grafana, queried by PromQL, and visualized by Grafana.
 
 ## What’s next?
 
 Now that you understand how Prometheus metrics work, what will you build?
 
-- One great next step is to [build a dashboard]({{< relref "../../dashboards/build-dashboards/" >}}) in Grafana and start turning that raw Prometheus telemetry data into insights about what’s going with your services and infrastructure.
-- Another great step is to learn about [Grafana Mimir](/oss/mimir/), which is essentially a database for Prometheus data. If you’re wondering how to make this work for a huge number of metrics with a lot of data and fast querying, check out Grafana Mimir.
-- If you’re interested in working with Prometheus data in Grafana directly, check out the [Prometheus data source]({{< relref "../../datasources/prometheus/" >}}) documentation, or check out [PromQL basics](https://prometheus.io/docs/prometheus/latest/querying/basics/).
+- One great next step is to [build a dashboard](ref:build-dashboards) in Grafana and start turning that raw Prometheus telemetry data into insights about what’s going with your services and infrastructure.
+- Another great step is to learn about [Grafana Mimir](/oss/mimir/), which is essentially a database for Prometheus data. If you’re wondering how to make this work for a large volumes of metrics with a lot of data and fast querying, check out Grafana Mimir.
+- If you’re interested in working with Prometheus data in Grafana directly, check out the [Prometheus data source](ref:prometheus) documentation, or check out [PromQL basics](https://prometheus.io/docs/prometheus/latest/querying/basics/).

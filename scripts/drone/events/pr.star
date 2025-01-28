@@ -4,20 +4,45 @@ It also includes a function generating a PR trigger from a list of included and 
 """
 
 load(
-    "scripts/drone/pipelines/test_frontend.star",
-    "test_frontend",
+    "scripts/drone/pipelines/benchmarks.star",
+    "integration_benchmarks",
 )
 load(
-    "scripts/drone/pipelines/test_backend.star",
-    "test_backend",
+    "scripts/drone/pipelines/build.star",
+    "build_e2e",
+)
+load(
+    "scripts/drone/pipelines/docs.star",
+    "docs_pipelines",
+    "trigger_docs_pr",
 )
 load(
     "scripts/drone/pipelines/integration_tests.star",
     "integration_tests",
 )
 load(
-    "scripts/drone/pipelines/build.star",
-    "build_e2e",
+    "scripts/drone/pipelines/lint_backend.star",
+    "lint_backend_pipeline",
+)
+load(
+    "scripts/drone/pipelines/lint_frontend.star",
+    "lint_frontend_pipeline",
+)
+load(
+    "scripts/drone/pipelines/shellcheck.star",
+    "shellcheck_pipeline",
+)
+load(
+    "scripts/drone/pipelines/swagger_gen.star",
+    "swagger_gen",
+)
+load(
+    "scripts/drone/pipelines/test_backend.star",
+    "test_backend",
+)
+load(
+    "scripts/drone/pipelines/test_frontend.star",
+    "test_frontend",
 )
 load(
     "scripts/drone/pipelines/verify_drone.star",
@@ -28,21 +53,8 @@ load(
     "verify_starlark",
 )
 load(
-    "scripts/drone/pipelines/docs.star",
-    "docs_pipelines",
-    "trigger_docs_pr",
-)
-load(
-    "scripts/drone/pipelines/shellcheck.star",
-    "shellcheck_pipeline",
-)
-load(
-    "scripts/drone/pipelines/lint_backend.star",
-    "lint_backend_pipeline",
-)
-load(
-    "scripts/drone/pipelines/lint_frontend.star",
-    "lint_frontend_pipeline",
+    "scripts/drone/pipelines/verify_storybook.star",
+    "verify_storybook",
 )
 
 ver_mode = "pr"
@@ -73,6 +85,12 @@ def pr_pipelines():
             ),
             ver_mode,
         ),
+        verify_storybook(
+            get_pr_trigger(
+                include_paths = ["packages/grafana-ui/**"],
+            ),
+            ver_mode,
+        ),
         test_frontend(
             get_pr_trigger(
                 exclude_paths = ["pkg/**", "packaging/**", "go.sum", "go.mod"],
@@ -88,6 +106,7 @@ def pr_pipelines():
         test_backend(
             get_pr_trigger(
                 include_paths = [
+                    "Makefile",
                     "pkg/**",
                     "packaging/**",
                     ".drone.yml",
@@ -95,6 +114,7 @@ def pr_pipelines():
                     "go.sum",
                     "go.mod",
                     "public/app/plugins/**/plugin.json",
+                    "docs/sources/setup-grafana/configure-grafana/feature-toggles/**",
                     "devenv/**",
                 ],
             ),
@@ -103,8 +123,11 @@ def pr_pipelines():
         lint_backend_pipeline(
             get_pr_trigger(
                 include_paths = [
+                    ".golangci.toml",
+                    "Makefile",
                     "pkg/**",
                     "packaging/**",
+                    ".drone.yml",
                     "conf/**",
                     "go.sum",
                     "go.mod",
@@ -132,6 +155,12 @@ def pr_pipelines():
         ),
         docs_pipelines(ver_mode, trigger_docs_pr()),
         shellcheck_pipeline(),
+        swagger_gen(
+            ver_mode,
+        ),
+        integration_benchmarks(
+            prefix = ver_mode,
+        ),
     ]
 
 def get_pr_trigger(include_paths = None, exclude_paths = None):

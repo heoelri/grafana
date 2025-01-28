@@ -1,11 +1,13 @@
 import { cx } from '@emotion/css';
-import React, { PureComponent } from 'react';
+import { PureComponent } from 'react';
 
-import { CoreApp, DataFrame, Field, LinkModel, LogRowModel } from '@grafana/data';
-import { Themeable2, withTheme2 } from '@grafana/ui';
+import { CoreApp, DataFrame, DataFrameType, Field, LinkModel, LogRowModel } from '@grafana/data';
+import { PopoverContent, Themeable2, withTheme2 } from '@grafana/ui';
+import { Trans } from 'app/core/internationalization';
 
 import { calculateLogsLabelStats, calculateStats } from '../utils';
 
+import { LogDetailsBody } from './LogDetailsBody';
 import { LogDetailsRow } from './LogDetailsRow';
 import { getLogLevelStyles, LogRowStyles } from './getLogRowStyles';
 import { getAllFields, createLogLineLinks } from './logParser';
@@ -20,12 +22,16 @@ export interface Props extends Themeable2 {
   app?: CoreApp;
   styles: LogRowStyles;
 
-  onClickFilterLabel?: (key: string, value: string) => void;
-  onClickFilterOutLabel?: (key: string, value: string) => void;
+  onClickFilterLabel?: (key: string, value: string, frame?: DataFrame) => void;
+  onClickFilterOutLabel?: (key: string, value: string, frame?: DataFrame) => void;
   getFieldLinks?: (field: Field, rowIndex: number, dataFrame: DataFrame) => Array<LinkModel<Field>>;
   displayedFields?: string[];
   onClickShowField?: (key: string) => void;
   onClickHideField?: (key: string) => void;
+  isFilterLabelActive?: (key: string, value: string, refId?: string) => Promise<boolean>;
+
+  onPinLine?: (row: LogRowModel) => void;
+  pinLineButtonTooltipTitle?: PopoverContent;
 }
 
 class UnThemedLogDetails extends PureComponent<Props> {
@@ -45,7 +51,9 @@ class UnThemedLogDetails extends PureComponent<Props> {
       displayedFields,
       getFieldLinks,
       wrapLogMessage,
+      onPinLine,
       styles,
+      pinLineButtonTooltipTitle,
     } = this.props;
     const levelStyles = getLogLevelStyles(theme, row.logLevel);
     const labels = row.labels ? row.labels : {};
@@ -55,13 +63,17 @@ class UnThemedLogDetails extends PureComponent<Props> {
     const displayedFieldsWithLinks = fieldsWithLinks.filter((f) => f.fieldIndex !== row.entryFieldIndex).sort();
     const hiddenFieldsWithLinks = fieldsWithLinks.filter((f) => f.fieldIndex === row.entryFieldIndex).sort();
     const fieldsWithLinksFromVariableMap = createLogLineLinks(hiddenFieldsWithLinks);
-
-    // do not show the log message unless there is a link attached
-    const fields = fieldsAndLinks.filter((f) => f.links?.length === 0 && f.fieldIndex !== row.entryFieldIndex).sort();
-    const fieldsAvailable = fields && fields.length > 0;
     const fieldsWithLinksAvailable =
       (displayedFieldsWithLinks && displayedFieldsWithLinks.length > 0) ||
       (fieldsWithLinksFromVariableMap && fieldsWithLinksFromVariableMap.length > 0);
+
+    const fields =
+      row.dataFrame.meta?.type === DataFrameType.LogLines
+        ? // for LogLines frames (dataplane) we don't want to show any additional fields besides already extracted labels and links
+          []
+        : // for other frames, do not show the log message unless there is a link attached
+          fieldsAndLinks.filter((f) => f.links?.length === 0 && f.fieldIndex !== row.entryFieldIndex).sort();
+    const fieldsAvailable = fields && fields.length > 0;
 
     // If logs with error, we are not showing the level color
     const levelClassName = hasError
@@ -76,10 +88,28 @@ class UnThemedLogDetails extends PureComponent<Props> {
           <div className={styles.logDetailsContainer}>
             <table className={styles.logDetailsTable}>
               <tbody>
+                {displayedFields && displayedFields.length > 0 && (
+                  <>
+                    <tr>
+                      <td colSpan={100} className={styles.logDetailsHeading} aria-label="Fields">
+                        <Trans i18nKey="logs.log-details.log-line">Log line</Trans>
+                      </td>
+                    </tr>
+                    <LogDetailsBody
+                      onClickShowField={onClickShowField}
+                      onClickHideField={onClickHideField}
+                      row={row}
+                      app={app}
+                      displayedFields={displayedFields}
+                      disableActions={false}
+                      theme={theme}
+                    />
+                  </>
+                )}
                 {(labelsAvailable || fieldsAvailable) && (
                   <tr>
                     <td colSpan={100} className={styles.logDetailsHeading} aria-label="Fields">
-                      Fields
+                      <Trans i18nKey="logs.log-details.fields">Fields</Trans>
                     </td>
                   </tr>
                 )}
@@ -103,6 +133,7 @@ class UnThemedLogDetails extends PureComponent<Props> {
                         wrapLogMessage={wrapLogMessage}
                         displayedFields={displayedFields}
                         disableActions={false}
+                        isFilterLabelActive={this.props.isFilterLabelActive}
                       />
                     );
                   })}
@@ -117,12 +148,13 @@ class UnThemedLogDetails extends PureComponent<Props> {
                       onClickHideField={onClickHideField}
                       onClickFilterOutLabel={onClickFilterOutLabel}
                       onClickFilterLabel={onClickFilterLabel}
-                      getStats={() => calculateStats(row.dataFrame.fields[fieldIndex].values.toArray())}
+                      getStats={() => calculateStats(row.dataFrame.fields[fieldIndex].values)}
                       displayedFields={displayedFields}
                       wrapLogMessage={wrapLogMessage}
                       row={row}
                       app={app}
                       disableActions={false}
+                      isFilterLabelActive={this.props.isFilterLabelActive}
                     />
                   );
                 })}
@@ -130,7 +162,7 @@ class UnThemedLogDetails extends PureComponent<Props> {
                 {fieldsWithLinksAvailable && (
                   <tr>
                     <td colSpan={100} className={styles.logDetailsHeading} aria-label="Data Links">
-                      Links
+                      <Trans i18nKey="logs.log-details.links">Links</Trans>
                     </td>
                   </tr>
                 )}
@@ -144,7 +176,9 @@ class UnThemedLogDetails extends PureComponent<Props> {
                       links={links}
                       onClickShowField={onClickShowField}
                       onClickHideField={onClickHideField}
-                      getStats={() => calculateStats(row.dataFrame.fields[fieldIndex].values.toArray())}
+                      onPinLine={onPinLine}
+                      pinLineButtonTooltipTitle={pinLineButtonTooltipTitle}
+                      getStats={() => calculateStats(row.dataFrame.fields[fieldIndex].values)}
                       displayedFields={displayedFields}
                       wrapLogMessage={wrapLogMessage}
                       row={row}
@@ -163,7 +197,9 @@ class UnThemedLogDetails extends PureComponent<Props> {
                       links={links}
                       onClickShowField={onClickShowField}
                       onClickHideField={onClickHideField}
-                      getStats={() => calculateStats(row.dataFrame.fields[fieldIndex].values.toArray())}
+                      onPinLine={onPinLine}
+                      pinLineButtonTooltipTitle={pinLineButtonTooltipTitle}
+                      getStats={() => calculateStats(row.dataFrame.fields[fieldIndex].values)}
                       displayedFields={displayedFields}
                       wrapLogMessage={wrapLogMessage}
                       row={row}
@@ -176,7 +212,7 @@ class UnThemedLogDetails extends PureComponent<Props> {
                 {!fieldsAvailable && !labelsAvailable && !fieldsWithLinksAvailable && (
                   <tr>
                     <td colSpan={100} aria-label="No details">
-                      No details available
+                      <Trans i18nKey="logs.log-details.no-details">No details available</Trans>
                     </td>
                   </tr>
                 )}

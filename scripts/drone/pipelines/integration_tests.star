@@ -3,21 +3,29 @@ This module returns the pipeline used for integration tests.
 """
 
 load(
+    "scripts/drone/services/services.star",
+    "integration_test_services",
+    "integration_test_services_volumes",
+)
+load(
+    "scripts/drone/steps/github.star",
+    "github_app_generate_token_step",
+    "github_app_pipeline_volumes",
+)
+load(
     "scripts/drone/steps/lib.star",
     "compile_build_cmd",
     "download_grabpl_step",
     "enterprise_setup_step",
     "identify_runner_step",
-    "mysql_integration_tests_step",
-    "postgres_integration_tests_step",
+    "memcached_integration_tests_steps",
+    "mysql_integration_tests_steps",
+    "postgres_integration_tests_steps",
+    "redis_integration_tests_steps",
+    "remote_alertmanager_integration_tests_steps",
     "verify_gen_cue_step",
     "verify_gen_jsonnet_step",
     "wire_install_step",
-)
-load(
-    "scripts/drone/services/services.star",
-    "integration_test_services",
-    "integration_test_services_volumes",
 )
 load(
     "scripts/drone/utils/utils.star",
@@ -37,7 +45,7 @@ def integration_tests(trigger, prefix, ver_mode = "pr"):
     """
     environment = {"EDITION": "oss"}
 
-    services = integration_test_services(edition = "oss")
+    services = integration_test_services()
     volumes = integration_test_services_volumes()
 
     init_steps = []
@@ -47,12 +55,10 @@ def integration_tests(trigger, prefix, ver_mode = "pr"):
 
     if ver_mode == "pr":
         # In pull requests, attempt to clone grafana enterprise.
+        init_steps.append(github_app_generate_token_step())
         init_steps.append(enterprise_setup_step())
 
-        # Ensure that verif_gen_cue happens after we clone enterprise
-        # At the time of writing this, very_gen_cue is depended on by the wire step which is what everything else depends on.
-        verify_step["depends_on"].append("clone-enterprise")
-        verify_jsonnet_step["depends_on"].append("clone-enterprise")
+        volumes += github_app_pipeline_volumes()
 
     init_steps += [
         download_grabpl_step(),
@@ -63,14 +69,15 @@ def integration_tests(trigger, prefix, ver_mode = "pr"):
         wire_install_step(),
     ]
 
-    test_steps = [
-        postgres_integration_tests_step(),
-        mysql_integration_tests_step(),
-    ]
+    # test_steps = [a, b] + [c, d] + [e, f]...
+    test_steps = postgres_integration_tests_steps() + \
+                 mysql_integration_tests_steps("mysql80", "8.0") + \
+                 redis_integration_tests_steps() + \
+                 memcached_integration_tests_steps() + \
+                 remote_alertmanager_integration_tests_steps()
 
     return pipeline(
         name = "{}-integration-tests".format(prefix),
-        edition = "oss",
         trigger = trigger,
         environment = environment,
         services = services,

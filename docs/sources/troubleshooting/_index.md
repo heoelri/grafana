@@ -1,18 +1,17 @@
 ---
 aliases:
   - troubleshoot-dashboards/
-cascade:
-  labels:
-    products:
-      - cloud
-      - enterprise
-      - oss
 description: Guide to troubleshooting Grafana problems
 keywords:
   - grafana
   - troubleshooting
   - documentation
   - guide
+labels:
+  products:
+    - cloud
+    - enterprise
+    - oss
 title: Troubleshooting
 weight: 180
 ---
@@ -57,6 +56,10 @@ sudo yum install freetype*
 sudo yum install urw-fonts
 ```
 
-## FAQs
+## Troubleshoot backend performance
 
-Check out the [FAQ section](https://community.grafana.com/c/howto/faq) on the Grafana Community page for answers to frequently asked questions.
+If you're experiencing backend performance problems, such as high memory or CPU usage, please refer to [Configure profiling and tracing to troubleshoot Grafana]({{< relref "../setup-grafana/configure-grafana/configure-tracing/index.md" >}}).
+
+## More help
+
+Check out the [Grafana Community](https://community.grafana.com/) for more troubleshooting help (you must be logged in to post or comment).

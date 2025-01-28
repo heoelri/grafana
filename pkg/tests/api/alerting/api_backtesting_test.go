@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os"
-	"path/filepath"
+	"path"
 	"testing"
 
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/stretchr/testify/require"
 
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
 	"github.com/grafana/grafana/pkg/services/accesscontrol/resourcepermissions"
 	"github.com/grafana/grafana/pkg/services/datasources"
@@ -18,12 +18,11 @@ import (
 	apimodels "github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
 	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/services/user"
-	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/tests/testinfra"
 )
 
 func TestBacktesting(t *testing.T) {
-	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
+	dir, grafanaPath := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
 		DisableLegacyAlerting: true,
 		EnableUnifiedAlerting: true,
 		DisableAnonymous:      true,
@@ -34,9 +33,9 @@ func TestBacktesting(t *testing.T) {
 		EnableLog: false,
 	})
 
-	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, path)
+	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, grafanaPath)
 
-	userId := createUser(t, env.SQLStore, user.CreateUserCommand{
+	userId := createUser(t, env.SQLStore, env.Cfg, user.CreateUserCommand{
 		DefaultOrgRole: string(org.RoleAdmin),
 		Password:       "admin",
 		Login:          "admin",
@@ -44,7 +43,7 @@ func TestBacktesting(t *testing.T) {
 
 	apiCli := newAlertingApiClient(grafanaListedAddr, "admin", "admin")
 
-	input, err := os.ReadFile(filepath.Join("api_backtesting_data.json"))
+	input, err := testData.ReadFile(path.Join("test-data", "api_backtesting_data.json"))
 	require.NoError(t, err)
 	var testData map[string]apimodels.BacktestConfig
 	require.NoError(t, json.Unmarshal(input, &testData))
@@ -92,14 +91,11 @@ func TestBacktesting(t *testing.T) {
 	})
 
 	t.Run("if user does not have permissions", func(t *testing.T) {
-		if !setting.IsEnterprise {
-			t.Skip("Enterprise-only test")
-		}
-
-		testUserId := createUser(t, env.SQLStore, user.CreateUserCommand{
-			DefaultOrgRole: "",
+		testUserId := createUser(t, env.SQLStore, env.Cfg, user.CreateUserCommand{
+			DefaultOrgRole: string(identity.RoleNone),
 			Password:       "test",
 			Login:          "test",
+			OrgID:          1,
 		})
 
 		testUserApiCli := newAlertingApiClient(grafanaListedAddr, "test", "test")
@@ -111,7 +107,7 @@ func TestBacktesting(t *testing.T) {
 		})
 
 		// access control permissions store
-		permissionsStore := resourcepermissions.NewStore(env.SQLStore)
+		permissionsStore := resourcepermissions.NewStore(env.Cfg, env.SQLStore, featuremgmt.WithFeatures())
 		_, err := permissionsStore.SetUserResourcePermission(context.Background(),
 			accesscontrol.GlobalOrgID,
 			accesscontrol.User{ID: testUserId},
@@ -128,8 +124,8 @@ func TestBacktesting(t *testing.T) {
 
 		t.Run("fail if can't query data sources", func(t *testing.T) {
 			status, body := testUserApiCli.SubmitRuleForBacktesting(t, queryRequest)
-			require.Contains(t, body, "user is not authorized to query one or many data sources used by the rule")
-			require.Equalf(t, http.StatusUnauthorized, status, "Response: %s", body)
+			require.Contains(t, body, "user is not authorized to access one or many data sources")
+			require.Equalf(t, http.StatusForbidden, status, "Response: %s", body)
 		})
 	})
 }

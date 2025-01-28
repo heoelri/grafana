@@ -3,104 +3,148 @@ package sync
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/sync/singleflight"
+
+	claims "github.com/grafana/authlib/types"
 
 	"github.com/grafana/grafana/pkg/infra/localcache"
 	"github.com/grafana/grafana/pkg/infra/log"
+	"github.com/grafana/grafana/pkg/infra/tracing"
+	"github.com/grafana/grafana/pkg/login/social"
 	"github.com/grafana/grafana/pkg/services/auth"
 	"github.com/grafana/grafana/pkg/services/authn"
+	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/oauthtoken"
-	"github.com/grafana/grafana/pkg/services/user"
-	"github.com/grafana/grafana/pkg/util/errutil"
 )
 
-var (
-	errExpiredAccessToken = errutil.NewBase(errutil.StatusUnauthorized, "oauth.expired-token")
-)
+const maxOAuthTokenCacheTTL = 5 * time.Minute
 
-func ProvideOAuthTokenSync(service oauthtoken.OAuthTokenService, sessionService auth.UserTokenService) *OAuthTokenSync {
+func ProvideOAuthTokenSync(service oauthtoken.OAuthTokenService, sessionService auth.UserTokenService, socialService social.Service, tracer tracing.Tracer,
+	features featuremgmt.FeatureToggles,
+) *OAuthTokenSync {
 	return &OAuthTokenSync{
 		log.New("oauth_token.sync"),
-		localcache.New(maxOAuthTokenCacheTTL, 15*time.Minute),
 		service,
 		sessionService,
+		socialService,
+		new(singleflight.Group),
+		tracer,
+		localcache.New(maxOAuthTokenCacheTTL, 15*time.Minute),
+		features,
 	}
 }
 
 type OAuthTokenSync struct {
-	log            log.Logger
-	cache          *localcache.CacheService
-	service        oauthtoken.OAuthTokenService
-	sessionService auth.UserTokenService
+	log               log.Logger
+	service           oauthtoken.OAuthTokenService
+	sessionService    auth.UserTokenService
+	socialService     social.Service
+	singleflightGroup *singleflight.Group
+	tracer            tracing.Tracer
+	cache             *localcache.CacheService
+	features          featuremgmt.FeatureToggles
 }
 
-func (s *OAuthTokenSync) SyncOauthTokenHook(ctx context.Context, identity *authn.Identity, _ *authn.Request) error {
-	namespace, id := identity.NamespacedID()
+func (s *OAuthTokenSync) SyncOauthTokenHook(ctx context.Context, id *authn.Identity, _ *authn.Request) error {
+	ctx, span := s.tracer.Start(ctx, "oauth.sync.SyncOauthTokenHook")
+	defer span.End()
+
 	// only perform oauth token check if identity is a user
-	if namespace != authn.NamespaceUser {
+	if !id.IsIdentityType(claims.TypeUser) {
 		return nil
 	}
 
-	// not authenticated through session tokens, so we can skip this hook
-	if identity.SessionToken == nil {
+	// Not authenticated through session tokens, so we can skip this hook.
+	if id.SessionToken == nil {
 		return nil
 	}
 
-	// if we recently have performed this it would be cached, so we can skip the hook
-	if _, ok := s.cache.Get(identity.ID); ok {
+	// Not authenticated with a oauth provider, so we can skip this hook.
+	if !strings.HasPrefix(id.GetAuthenticatedBy(), "oauth") {
 		return nil
 	}
 
-	token, exists, _ := s.service.HasOAuthEntry(ctx, &user.SignedInUser{UserID: id})
-	// user is not authenticated through oauth so skip further checks
-	if !exists {
+	userID, err := id.GetInternalID()
+	if err != nil {
+		s.log.FromContext(ctx).Error("Failed to refresh token. Invalid ID for identity", "type", id.GetIdentityType(), "err", err)
 		return nil
 	}
 
-	// token has no expire time configured, so we don't have to refresh it
-	if token.OAuthExpiry.IsZero() {
-		// cache the token check, so we don't perform it on every request
-		s.cache.Set(identity.ID, struct{}{}, getOAuthTokenCacheTTL(token.OAuthExpiry))
+	ctxLogger := s.log.FromContext(ctx).New("userID", userID)
+
+	cacheKey := fmt.Sprintf("token-check-%s", id.GetID())
+	if s.features.IsEnabledGlobally(featuremgmt.FlagImprovedExternalSessionHandling) {
+		cacheKey = fmt.Sprintf("token-check-%s-%d", id.GetID(), id.SessionToken.Id)
+	}
+
+	if _, ok := s.cache.Get(cacheKey); ok {
+		ctxLogger.Debug("Expiration check has been cached, no need to refresh")
 		return nil
 	}
 
-	expires := token.OAuthExpiry.Round(0).Add(-oauthtoken.ExpiryDelta)
-	// token has not expired, so we don't have to refresh it
-	if !expires.Before(time.Now()) {
-		// cache the token check, so we don't perform it on every request
-		s.cache.Set(identity.ID, struct{}{}, getOAuthTokenCacheTTL(expires))
-		return nil
-	}
+	_, err, _ = s.singleflightGroup.Do(cacheKey, func() (interface{}, error) {
+		ctxLogger.Debug("Singleflight request for OAuth token sync")
 
-	if err := s.service.TryTokenRefresh(ctx, token); err != nil {
-		if !errors.Is(err, oauthtoken.ErrNoRefreshTokenFound) {
-			s.log.FromContext(ctx).Error("Failed to refresh OAuth access token", "id", identity.ID, "error", err)
+		updateCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+
+		token, refreshErr := s.service.TryTokenRefresh(updateCtx, id, id.SessionToken)
+		if refreshErr != nil {
+			if errors.Is(refreshErr, context.Canceled) {
+				return nil, nil
+			}
+
+			if errors.Is(refreshErr, oauthtoken.ErrRetriesExhausted) {
+				ctxLogger.Warn("Retries have been exhausted for locking the DB for OAuth token refresh", "id", id.ID, "error", refreshErr)
+				return nil, refreshErr
+			}
+
+			ctxLogger.Error("Failed to refresh OAuth access token", "id", id.ID, "error", refreshErr)
+
+			// log the user out
+			if err := s.sessionService.RevokeToken(ctx, id.SessionToken, false); err != nil {
+				ctxLogger.Warn("Failed to revoke session token", "id", id.ID, "tokenId", id.SessionToken.Id, "error", err)
+			}
+
+			s.cache.Delete(cacheKey)
+			return nil, refreshErr
 		}
 
-		if err := s.service.InvalidateOAuthTokens(ctx, token); err != nil {
-			s.log.FromContext(ctx).Error("Failed invalidate OAuth tokens", "id", identity.ID, "error", err)
-		}
+		s.cache.Set(cacheKey, true, getOAuthTokenCacheTTL(token))
+		return nil, nil
+	})
 
-		if err := s.sessionService.RevokeToken(ctx, identity.SessionToken, false); err != nil {
-			s.log.FromContext(ctx).Error("Failed to revoke session token", "id", identity.ID, "tokenId", identity.SessionToken.Id, "error", err)
-		}
-
-		return errExpiredAccessToken.Errorf("oauth access token could not be refreshed: %w", auth.ErrInvalidSessionToken)
+	if err != nil {
+		return authn.ErrExpiredAccessToken.Errorf("OAuth access token could not be refreshed: %w", err)
 	}
 
 	return nil
 }
 
-const maxOAuthTokenCacheTTL = 10 * time.Minute
-
-func getOAuthTokenCacheTTL(t time.Time) time.Duration {
-	if t.IsZero() {
-		return maxOAuthTokenCacheTTL
+func getOAuthTokenCacheTTL(token *oauth2.Token) time.Duration {
+	ttl := maxOAuthTokenCacheTTL
+	if token == nil {
+		return ttl
 	}
 
-	ttl := time.Until(t)
-	if ttl > maxOAuthTokenCacheTTL {
-		return maxOAuthTokenCacheTTL
+	if !token.Expiry.IsZero() {
+		d := time.Until(token.Expiry.Add(-oauthtoken.ExpiryDelta))
+		if d < ttl {
+			ttl = d
+		}
+	}
+
+	idTokenExpiry, err := oauthtoken.GetIDTokenExpiry(token)
+	if err == nil && !idTokenExpiry.IsZero() {
+		d := time.Until(idTokenExpiry.Add(-oauthtoken.ExpiryDelta))
+		if d < ttl {
+			ttl = d
+		}
 	}
 
 	return ttl

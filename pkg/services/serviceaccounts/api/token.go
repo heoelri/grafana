@@ -7,7 +7,7 @@ import (
 
 	"github.com/grafana/grafana/pkg/api/dtos"
 	"github.com/grafana/grafana/pkg/api/response"
-	apikeygenprefix "github.com/grafana/grafana/pkg/components/apikeygenprefixed"
+	"github.com/grafana/grafana/pkg/components/satokengen"
 	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
 	"github.com/grafana/grafana/pkg/services/serviceaccounts"
 	"github.com/grafana/grafana/pkg/web"
@@ -69,8 +69,9 @@ func (api *ServiceAccountsAPI) ListTokens(ctx *contextmodel.ReqContext) response
 		return response.Error(http.StatusBadRequest, "Service Account ID is invalid", err)
 	}
 
+	orgID := ctx.SignedInUser.GetOrgID()
 	saTokens, err := api.service.ListTokens(ctx.Req.Context(), &serviceaccounts.GetSATokensQuery{
-		OrgID:            &ctx.OrgID,
+		OrgID:            &orgID,
 		ServiceAccountID: &saID,
 	})
 	if err != nil {
@@ -131,7 +132,10 @@ func (api *ServiceAccountsAPI) CreateToken(c *contextmodel.ReqContext) response.
 	}
 
 	// confirm service account exists
-	if _, err = api.service.RetrieveServiceAccount(c.Req.Context(), c.OrgID, saID); err != nil {
+	if _, err = api.service.RetrieveServiceAccount(c.Req.Context(), &serviceaccounts.GetServiceAccountQuery{
+		OrgID: c.SignedInUser.GetOrgID(),
+		ID:    saID,
+	}); err != nil {
 		return response.ErrOrFallback(http.StatusInternalServerError, "Failed to retrieve service account", err)
 	}
 
@@ -141,7 +145,7 @@ func (api *ServiceAccountsAPI) CreateToken(c *contextmodel.ReqContext) response.
 	}
 
 	// Force affected service account to be the one referenced in the URL
-	cmd.OrgId = c.OrgID
+	cmd.OrgId = c.SignedInUser.GetOrgID()
 
 	if api.cfg.ApiKeyMaxSecondsToLive != -1 {
 		if cmd.SecondsToLive == 0 {
@@ -160,7 +164,7 @@ func (api *ServiceAccountsAPI) CreateToken(c *contextmodel.ReqContext) response.
 		}
 	}
 
-	newKeyInfo, err := apikeygenprefix.New(ServiceID)
+	newKeyInfo, err := satokengen.New(ServiceID)
 	if err != nil {
 		return response.Error(http.StatusInternalServerError, "Generating service account token failed", err)
 	}
@@ -204,7 +208,10 @@ func (api *ServiceAccountsAPI) DeleteToken(c *contextmodel.ReqContext) response.
 	}
 
 	// confirm service account exists
-	if _, err := api.service.RetrieveServiceAccount(c.Req.Context(), c.OrgID, saID); err != nil {
+	if _, err := api.service.RetrieveServiceAccount(c.Req.Context(), &serviceaccounts.GetServiceAccountQuery{
+		OrgID: c.SignedInUser.GetOrgID(),
+		ID:    saID,
+	}); err != nil {
 		return response.ErrOrFallback(http.StatusInternalServerError, "Failed to retrieve service account", err)
 	}
 
@@ -213,7 +220,7 @@ func (api *ServiceAccountsAPI) DeleteToken(c *contextmodel.ReqContext) response.
 		return response.Error(http.StatusBadRequest, "Token ID is invalid", err)
 	}
 
-	if err = api.service.DeleteServiceAccountToken(c.Req.Context(), c.OrgID, saID, tokenID); err != nil {
+	if err = api.service.DeleteServiceAccountToken(c.Req.Context(), c.SignedInUser.GetOrgID(), saID, tokenID); err != nil {
 		return response.ErrOrFallback(http.StatusInternalServerError, failedToDeleteMsg, err)
 	}
 
@@ -245,7 +252,7 @@ type DeleteTokenParams struct {
 // swagger:response listTokensResponse
 type ListTokensResponse struct {
 	// in:body
-	Body *TokenDTO
+	Body []TokenDTO
 }
 
 // swagger:response createTokenResponse

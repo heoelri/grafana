@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -122,14 +122,13 @@ func main() {
 
 	waitDuration := time.Duration(waitSeconds) * time.Second
 	http.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
-
 		writer.WriteHeader(http.StatusOK)
 		writer.Write([]byte(landingPage))
 	})
 
 	http.HandleFunc("/listen", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("got submission from: %s\n", r.RemoteAddr)
-		b, err := ioutil.ReadAll(r.Body)
+		b, err := io.ReadAll(r.Body)
 		if err != nil {
 			log.Println(err)
 			w.WriteHeader(http.StatusBadRequest)

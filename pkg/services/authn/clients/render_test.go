@@ -9,12 +9,12 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 
+	claims "github.com/grafana/authlib/types"
+
 	"github.com/grafana/grafana/pkg/services/authn"
 	"github.com/grafana/grafana/pkg/services/login"
 	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/services/rendering"
-	"github.com/grafana/grafana/pkg/services/user"
-	"github.com/grafana/grafana/pkg/services/user/usertest"
 )
 
 func TestRender_Authenticate(t *testing.T) {
@@ -23,14 +23,13 @@ func TestRender_Authenticate(t *testing.T) {
 		renderKey         string
 		req               *authn.Request
 		expectedErr       error
-		expectedUsr       *user.SignedInUser
 		expectedIdentity  *authn.Identity
 		expectedRenderUsr *rendering.RenderUser
 	}
 
 	tests := []TestCase{
 		{
-			desc:      "expect valid render key to return render user identity",
+			desc:      "expect valid render key to return anonymous user identity for org role Viewer",
 			renderKey: "123",
 			req: &authn.Request{
 				HTTPRequest: &http.Request{
@@ -38,16 +37,39 @@ func TestRender_Authenticate(t *testing.T) {
 				},
 			},
 			expectedIdentity: &authn.Identity{
-				ID:           "user:0",
-				OrgID:        1,
-				OrgRoles:     map[int64]org.RoleType{1: org.RoleViewer},
-				AuthModule:   login.RenderModule,
-				ClientParams: authn.ClientParams{SyncPermissions: true},
+				ID:              "0",
+				Type:            claims.TypeAnonymous,
+				OrgID:           1,
+				OrgRoles:        map[int64]org.RoleType{1: org.RoleViewer},
+				AuthenticatedBy: login.RenderModule,
+				ClientParams:    authn.ClientParams{SyncPermissions: true},
 			},
 			expectedRenderUsr: &rendering.RenderUser{
 				OrgID:   1,
 				UserID:  0,
 				OrgRole: "Viewer",
+			},
+		},
+		{
+			desc:      "expect valid render key to return render user identity for org role Admin",
+			renderKey: "123",
+			req: &authn.Request{
+				HTTPRequest: &http.Request{
+					Header: map[string][]string{"Cookie": {"renderKey=123"}},
+				},
+			},
+			expectedIdentity: &authn.Identity{
+				ID:              "0",
+				Type:            claims.TypeRenderService,
+				OrgID:           1,
+				OrgRoles:        map[int64]org.RoleType{1: org.RoleAdmin},
+				AuthenticatedBy: login.RenderModule,
+				ClientParams:    authn.ClientParams{SyncPermissions: true},
+			},
+			expectedRenderUsr: &rendering.RenderUser{
+				OrgID:   1,
+				UserID:  0,
+				OrgRole: "Admin",
 			},
 		},
 		{
@@ -59,23 +81,14 @@ func TestRender_Authenticate(t *testing.T) {
 				},
 			},
 			expectedIdentity: &authn.Identity{
-				ID:             "user:1",
-				OrgID:          1,
-				OrgName:        "test",
-				OrgRoles:       map[int64]org.RoleType{1: org.RoleAdmin},
-				IsGrafanaAdmin: boolPtr(false),
-				AuthModule:     login.RenderModule,
-				ClientParams:   authn.ClientParams{SyncPermissions: true},
+				ID:              "1",
+				Type:            claims.TypeUser,
+				AuthenticatedBy: login.RenderModule,
+				ClientParams:    authn.ClientParams{FetchSyncedUser: true, SyncPermissions: true},
 			},
 			expectedRenderUsr: &rendering.RenderUser{
 				OrgID:  1,
 				UserID: 1,
-			},
-			expectedUsr: &user.SignedInUser{
-				UserID:  1,
-				OrgID:   1,
-				OrgName: "test",
-				OrgRole: "Admin",
 			},
 		},
 		{
@@ -97,7 +110,7 @@ func TestRender_Authenticate(t *testing.T) {
 			renderService := rendering.NewMockService(ctrl)
 			renderService.EXPECT().GetRenderUser(gomock.Any(), tt.renderKey).Return(tt.expectedRenderUsr, tt.expectedRenderUsr != nil)
 
-			c := ProvideRender(&usertest.FakeUserService{ExpectedSignedInUser: tt.expectedUsr}, renderService)
+			c := ProvideRender(renderService)
 			identity, err := c.Authenticate(context.Background(), tt.req)
 			if tt.expectedErr != nil {
 				assert.ErrorIs(t, tt.expectedErr, err)
@@ -141,7 +154,7 @@ func TestRender_Test(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
-			c := ProvideRender(&usertest.FakeUserService{}, &rendering.MockService{})
+			c := ProvideRender(&rendering.MockService{})
 			assert.Equal(t, tt.expected, c.Test(context.Background(), tt.req))
 		})
 	}

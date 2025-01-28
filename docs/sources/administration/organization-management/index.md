@@ -59,7 +59,7 @@ Complete this task when you want to view a list of existing organizations.
 **To view a list of organizations:**
 
 1. Sign in to Grafana as a server administrator.
-1. Click **Administration** in the left-side menu, and then **Organizations**.
+1. Click **Administration** in the left-side menu, **General**, and then **Organizations**.
 
 ## Create an organization
 
@@ -72,7 +72,7 @@ Create an organization when you want to isolate dashboards and other resources f
 **To create an organization:**
 
 1. Sign in to Grafana as a server administrator.
-1. Click **Administration** in the left-side menu, and then **Organizations**.
+1. Click **Administration** in the left-side menu, **General**, and then **Organizations**.
 1. Click **+ New org**.
 1. Enter the name of the new organization and click **Create**.
 
@@ -88,7 +88,9 @@ For more information about adding users to an organization, refer to [Add a user
 
 This action permanently removes an organization from your Grafana server.
 
-> **Warning:** Deleting the organization also deletes all teams and dashboards associated the organization.
+{{% admonition type="warning" %}}
+Deleting the organization also deletes all teams and dashboards associated the organization.
+{{% /admonition %}}
 
 ### Before you begin
 
@@ -98,7 +100,7 @@ This action permanently removes an organization from your Grafana server.
 **To delete an organization:**
 
 1. Sign in to Grafana as a server administrator.
-1. Click **Administration** in the left-side menu, and then **Organizations**.
+1. Click **Administration** in the left-side menu, **General**, and then **Organizations**.
 1. Click the red **X** next to the organization that you want to delete.
 1. Click **Delete**.
 
@@ -113,6 +115,6 @@ Edit an organization when you want to change its name.
 **To edit an organization:**
 
 1. Sign in to Grafana as a server administrator.
-1. Click **Administration** in the left-side menu, and then **Organizations**.
+1. Click **Administration** in the left-side menu, **General**, and then **Organizations**.
 1. Click the organization you want to edit.
 1. Update the organization name and click **Update**.

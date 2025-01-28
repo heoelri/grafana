@@ -15,19 +15,25 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	claims "github.com/grafana/authlib/types"
+
 	"github.com/grafana/grafana/pkg/api/dtos"
 	"github.com/grafana/grafana/pkg/api/response"
 	"github.com/grafana/grafana/pkg/api/routing"
 	"github.com/grafana/grafana/pkg/components/simplejson"
 	"github.com/grafana/grafana/pkg/infra/log"
-	"github.com/grafana/grafana/pkg/login"
 	"github.com/grafana/grafana/pkg/login/social"
+	"github.com/grafana/grafana/pkg/models/usertoken"
 	"github.com/grafana/grafana/pkg/services/auth/authtest"
+	"github.com/grafana/grafana/pkg/services/authn"
+	"github.com/grafana/grafana/pkg/services/authn/authntest"
 	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/hooks"
 	"github.com/grafana/grafana/pkg/services/licensing"
+	"github.com/grafana/grafana/pkg/services/licensing/licensingtest"
 	loginservice "github.com/grafana/grafana/pkg/services/login"
+	"github.com/grafana/grafana/pkg/services/login/authinfotest"
 	"github.com/grafana/grafana/pkg/services/navtree"
 	"github.com/grafana/grafana/pkg/services/secrets"
 	"github.com/grafana/grafana/pkg/services/secrets/fakes"
@@ -35,6 +41,8 @@ import (
 	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
 )
+
+const loginCookieName = "grafana_session"
 
 func fakeSetIndexViewData(t *testing.T) {
 	origSetIndexViewData := setIndexViewData
@@ -46,6 +54,11 @@ func fakeSetIndexViewData(t *testing.T) {
 			User:     &dtos.CurrentUser{},
 			Settings: &dtos.FrontendSettingsDTO{},
 			NavTree:  &navtree.NavTreeRoot{},
+			Assets: &dtos.EntryPointAssets{
+				JSFiles: []dtos.EntryPointAsset{},
+				Dark:    "dark.css",
+				Light:   "light.css",
+			},
 		}
 		return data, nil
 	}
@@ -57,7 +70,7 @@ func fakeViewIndex(t *testing.T) {
 		getViewIndex = origGetViewIndex
 	})
 	getViewIndex = func() string {
-		return "index-template"
+		return "index"
 	}
 }
 
@@ -110,17 +123,15 @@ func TestLoginErrorCookieAPIEndpoint(t *testing.T) {
 		return response.Empty(http.StatusOK)
 	})
 
-	cfg.LoginCookieName = "grafana_session"
-	setting.SecretKey = "login_testing"
-
+	cfg.LoginCookieName = loginCookieName
 	cfg.OAuthAutoLogin = true
 
 	oauthError := errors.New("User not a member of one of the required organizations")
 	encryptedError, err := hs.SecretsService.Encrypt(context.Background(), []byte(oauthError.Error()), secrets.WithoutScope())
 	require.NoError(t, err)
 	expCookiePath := "/"
-	if len(setting.AppSubUrl) > 0 {
-		expCookiePath = setting.AppSubUrl
+	if len(cfg.AppSubURL) > 0 {
+		expCookiePath = cfg.AppSubURL
 	}
 	cookie := http.Cookie{
 		Name:     loginErrorCookieName,
@@ -315,11 +326,15 @@ func TestLoginPostRedirect(t *testing.T) {
 
 	fakeViewIndex(t)
 	sc := setupScenarioContext(t, "/login")
+
 	hs := &HTTPServer{
-		log:              log.NewNopLogger(),
-		Cfg:              setting.NewCfg(),
-		HooksService:     &hooks.HooksService{},
-		License:          &licensing.OSSLicensingService{},
+		log:          log.NewNopLogger(),
+		Cfg:          setting.NewCfg(),
+		HooksService: &hooks.HooksService{},
+		License:      &licensing.OSSLicensingService{},
+		authnService: &authntest.FakeService{
+			ExpectedIdentity: &authn.Identity{ID: "42", Type: claims.TypeUser, SessionToken: &usertoken.UserToken{}},
+		},
 		AuthTokenService: authtest.NewFakeUserAuthTokenService(),
 		Features:         featuremgmt.WithFeatures(),
 	}
@@ -330,13 +345,6 @@ func TestLoginPostRedirect(t *testing.T) {
 		c.Req.Body = io.NopCloser(bytes.NewBufferString(`{"user":"admin","password":"admin"}`))
 		return hs.LoginPost(c)
 	})
-
-	user := &user.User{
-		ID:    42,
-		Email: "",
-	}
-
-	hs.authenticator = &fakeAuthenticator{user, "", nil}
 
 	redirectCases := []redirectCase{
 		{
@@ -427,6 +435,9 @@ func TestLoginPostRedirect(t *testing.T) {
 		hs.Cfg.AppSubURL = c.appSubURL
 
 		t.Run(c.desc, func(t *testing.T) {
+			if c.desc == "grafana invalid relative url starting with subpath" {
+				fmt.Println()
+			}
 			expCookiePath := "/"
 			if len(hs.Cfg.AppSubURL) > 0 {
 				expCookiePath = hs.Cfg.AppSubURL
@@ -482,6 +493,7 @@ func TestLoginOAuthRedirect(t *testing.T) {
 		oAuthInfos: oAuthInfos,
 	}
 	hs := &HTTPServer{
+		authnService:     &authntest.FakeService{},
 		Cfg:              cfg,
 		SettingsProvider: &setting.OSSImpl{Cfg: cfg},
 		License:          &licensing.OSSLicensingService{},
@@ -551,14 +563,66 @@ func TestAuthProxyLoginWithEnableLoginToken(t *testing.T) {
 	assert.Equal(t, "/", location[0])
 	setCookie := sc.resp.Header()["Set-Cookie"]
 	require.NotNil(t, setCookie, "Set-Cookie should exist")
-	assert.Equal(t, "grafana_session=; Path=/; Max-Age=0; HttpOnly", setCookie[0])
+	assert.Equal(t, fmt.Sprintf("%s=; Path=/; Max-Age=0; HttpOnly", loginCookieName), setCookie[0])
+}
+
+func TestAuthProxyLoginWithEnableLoginTokenAndEnabledOauthAutoLogin(t *testing.T) {
+	fakeSetIndexViewData(t)
+
+	mock := &mockSocialService{
+		oAuthInfo: &social.OAuthInfo{
+			ClientId:     "fake",
+			ClientSecret: "fakefake",
+			Enabled:      true,
+			AllowSignup:  true,
+			Name:         "github",
+		},
+		oAuthInfos: oAuthInfos,
+	}
+
+	sc := setupScenarioContext(t, "/login")
+	sc.cfg.LoginCookieName = loginCookieName
+	sc.cfg.OAuthAutoLogin = true
+	hs := &HTTPServer{
+		Cfg:              sc.cfg,
+		SettingsProvider: &setting.OSSImpl{Cfg: sc.cfg},
+		License:          &licensing.OSSLicensingService{},
+		AuthTokenService: authtest.NewFakeUserAuthTokenService(),
+		log:              log.New("hello"),
+		SocialService:    mock,
+		Features:         featuremgmt.WithFeatures(),
+	}
+
+	sc.defaultHandler = routing.Wrap(func(c *contextmodel.ReqContext) response.Response {
+		c.IsSignedIn = true
+		c.SignedInUser = &user.SignedInUser{
+			UserID:          10,
+			AuthenticatedBy: loginservice.AuthProxyAuthModule,
+		}
+		hs.LoginView(c)
+		return response.Empty(http.StatusOK)
+	})
+
+	sc.cfg.AuthProxy.Enabled = true
+	sc.cfg.AuthProxy.EnableLoginToken = true
+
+	sc.m.Get(sc.url, sc.defaultHandler)
+	sc.fakeReqNoAssertions("GET", sc.url).exec()
+	require.Equal(t, 302, sc.resp.Code)
+
+	location, ok := sc.resp.Header()["Location"]
+	assert.True(t, ok)
+	assert.Equal(t, "/", location[0])
+	setCookie := sc.resp.Header()["Set-Cookie"]
+	require.NotNil(t, setCookie, "Set-Cookie should exist")
+	assert.Equal(t, fmt.Sprintf("%s=; Path=/; Max-Age=0; HttpOnly", loginCookieName), setCookie[0])
 }
 
 func setupAuthProxyLoginTest(t *testing.T, enableLoginToken bool) *scenarioContext {
 	fakeSetIndexViewData(t)
 
 	sc := setupScenarioContext(t, "/login")
-	sc.cfg.LoginCookieName = "grafana_session"
+	sc.cfg.LoginCookieName = loginCookieName
 	hs := &HTTPServer{
 		Cfg:              sc.cfg,
 		SettingsProvider: &setting.OSSImpl{Cfg: sc.cfg},
@@ -572,14 +636,15 @@ func setupAuthProxyLoginTest(t *testing.T, enableLoginToken bool) *scenarioConte
 	sc.defaultHandler = routing.Wrap(func(c *contextmodel.ReqContext) response.Response {
 		c.IsSignedIn = true
 		c.SignedInUser = &user.SignedInUser{
-			UserID: 10,
+			UserID:          10,
+			AuthenticatedBy: loginservice.AuthProxyAuthModule,
 		}
 		hs.LoginView(c)
 		return response.Empty(http.StatusOK)
 	})
 
-	sc.cfg.AuthProxyEnabled = true
-	sc.cfg.AuthProxyEnableLoginToken = enableLoginToken
+	sc.cfg.AuthProxy.Enabled = true
+	sc.cfg.AuthProxy.EnableLoginToken = enableLoginToken
 
 	sc.m.Get(sc.url, sc.defaultHandler)
 	sc.fakeReqNoAssertions("GET", sc.url).exec()
@@ -587,104 +652,205 @@ func setupAuthProxyLoginTest(t *testing.T, enableLoginToken bool) *scenarioConte
 	return sc
 }
 
-type loginHookTest struct {
-	info *loginservice.LoginInfo
-}
+func TestLogoutSaml(t *testing.T) {
+	fakeSetIndexViewData(t)
+	fakeViewIndex(t)
+	sc := setupScenarioContextSamlLogout(t, "/logout")
+	license := licensingtest.NewFakeLicensing()
+	license.On("FeatureEnabled", "saml").Return(true)
 
-func (r *loginHookTest) LoginHook(loginInfo *loginservice.LoginInfo, req *contextmodel.ReqContext) {
-	r.info = loginInfo
-}
-
-func TestLoginPostRunLokingHook(t *testing.T) {
-	sc := setupScenarioContext(t, "/login")
-	hookService := &hooks.HooksService{}
 	hs := &HTTPServer{
-		log:              log.New("test"),
-		Cfg:              setting.NewCfg(),
-		License:          &licensing.OSSLicensingService{},
-		AuthTokenService: authtest.NewFakeUserAuthTokenService(),
+		authnService: &authntest.FakeService{
+			ExpectedClientConfig: &authntest.FakeSSOClientConfig{
+				ExpectedIsSingleLogoutEnabled: true,
+			},
+		},
+		Cfg:              sc.cfg,
+		SettingsProvider: &setting.OSSImpl{Cfg: sc.cfg},
+		License:          license,
+		SocialService:    &mockSocialService{},
 		Features:         featuremgmt.WithFeatures(),
-		HooksService:     hookService,
+		authInfoService: &authinfotest.FakeService{
+			ExpectedUserAuth: &loginservice.UserAuth{AuthModule: loginservice.SAMLAuthModule},
+		},
 	}
 
+	assert.Equal(t, true, hs.samlSingleLogoutEnabled())
 	sc.defaultHandler = routing.Wrap(func(c *contextmodel.ReqContext) response.Response {
-		c.Req.Header.Set("Content-Type", "application/json")
-		c.Req.Body = io.NopCloser(bytes.NewBufferString(`{"user":"admin","password":"admin"}`))
-		x := hs.LoginPost(c)
-		return x
+		c.SignedInUser = &user.SignedInUser{
+			UserID:          1,
+			AuthenticatedBy: loginservice.SAMLAuthModule,
+		}
+		hs.Logout(c)
+		return response.Empty(http.StatusOK)
 	})
+	sc.m.Get(sc.url, sc.defaultHandler)
+	sc.fakeReqNoAssertions("GET", sc.url).exec()
+	require.Equal(t, 302, sc.resp.Code)
+}
 
-	testHook := loginHookTest{}
-	hookService.AddLoginHook(testHook.LoginHook)
-
-	testUser := &user.User{
-		ID:    42,
-		Email: "",
+func TestIsExternallySynced(t *testing.T) {
+	testcases := []struct {
+		name                string
+		cfg                 *setting.Cfg
+		provider            string
+		enabledAuthnClients []string
+		authnClientConfig   authn.SSOClientConfig
+		expected            bool
+	}{
+		// Same for all of the OAuth providers
+		{
+			name:                "AzureAD external user should return that it is externally synced",
+			cfg:                 &setting.Cfg{},
+			provider:            loginservice.AzureADAuthModule,
+			enabledAuthnClients: []string{authn.ClientWithPrefix("azuread")},
+			authnClientConfig: &authntest.FakeSSOClientConfig{
+				ExpectedIsSkipOrgRoleSyncEnabled: false,
+			},
+			expected: true,
+		},
+		{
+			name:                "AzureAD external user should return that it is not externally synced when org role sync is set",
+			cfg:                 &setting.Cfg{},
+			provider:            loginservice.AzureADAuthModule,
+			enabledAuthnClients: []string{authn.ClientWithPrefix(strings.TrimPrefix(loginservice.AzureADAuthModule, "oauth_"))},
+			authnClientConfig: &authntest.FakeSSOClientConfig{
+				ExpectedIsSkipOrgRoleSyncEnabled: true,
+			},
+			expected: false,
+		},
+		{
+			name:                "AzureAD external user should return that it is not externally synced when the provider is not enabled",
+			cfg:                 &setting.Cfg{},
+			enabledAuthnClients: []string{},
+			authnClientConfig: &authntest.FakeSSOClientConfig{
+				ExpectedIsSkipOrgRoleSyncEnabled: false,
+			},
+			provider: loginservice.AzureADAuthModule,
+			expected: false,
+		},
+		// saml
+		{
+			name:                "SAML synced user should return that it is not externally synced when the provider is disabled",
+			cfg:                 &setting.Cfg{},
+			provider:            loginservice.SAMLAuthModule,
+			enabledAuthnClients: []string{},
+			authnClientConfig: &authntest.FakeSSOClientConfig{
+				ExpectedIsSkipOrgRoleSyncEnabled: false,
+			},
+			expected: false,
+		},
+		{
+			name:                "SAML synced user should return that it is externally synced",
+			cfg:                 &setting.Cfg{},
+			provider:            loginservice.SAMLAuthModule,
+			enabledAuthnClients: []string{authn.ClientSAML},
+			authnClientConfig: &authntest.FakeSSOClientConfig{
+				ExpectedIsSkipOrgRoleSyncEnabled: false,
+			},
+			expected: true,
+		},
+		{
+			name:                "SAML synced user should return that it is not externally synced when org role sync is set",
+			cfg:                 &setting.Cfg{},
+			provider:            loginservice.SAMLAuthModule,
+			enabledAuthnClients: []string{authn.ClientSAML},
+			authnClientConfig: &authntest.FakeSSOClientConfig{
+				ExpectedIsSkipOrgRoleSyncEnabled: true,
+			},
+			expected: false,
+		},
+		// ldap
+		{
+			name:     "LDAP synced user should return that it is externally synced",
+			cfg:      &setting.Cfg{LDAPAuthEnabled: true, LDAPSkipOrgRoleSync: false},
+			provider: loginservice.LDAPAuthModule,
+			expected: true,
+		},
+		{
+			name:     "LDAP synced user should return that it is not externally synced when org role sync is set",
+			cfg:      &setting.Cfg{LDAPAuthEnabled: true, LDAPSkipOrgRoleSync: true},
+			provider: loginservice.LDAPAuthModule,
+			expected: false,
+		},
+		// jwt
+		{
+			name:     "JWT synced user should return that it is externally synced",
+			cfg:      &setting.Cfg{JWTAuth: setting.AuthJWTSettings{Enabled: true, SkipOrgRoleSync: false}},
+			provider: loginservice.JWTModule,
+			expected: true,
+		},
+		{
+			name:     "JWT synced user should return that it is not externally synced when org role sync is set",
+			cfg:      &setting.Cfg{JWTAuth: setting.AuthJWTSettings{Enabled: true, SkipOrgRoleSync: true}},
+			provider: loginservice.JWTModule,
+			expected: false,
+		},
+		// IsProvider test
+		{
+			name:     "If no provider enabled should return false",
+			cfg:      &setting.Cfg{JWTAuth: setting.AuthJWTSettings{Enabled: false, SkipOrgRoleSync: true}},
+			provider: loginservice.JWTModule,
+			expected: false,
+		},
 	}
 
-	testCases := []struct {
-		desc       string
-		authUser   *user.User
-		authModule string
-		authErr    error
-		info       loginservice.LoginInfo
+	for _, tc := range testcases {
+		hs := &HTTPServer{
+			authnService: &authntest.FakeService{
+				ExpectedClientConfig: tc.authnClientConfig,
+				EnabledClients:       tc.enabledAuthnClients,
+			},
+		}
+
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, hs.isExternallySynced(tc.cfg, tc.provider))
+		})
+	}
+}
+
+func TestIsProviderEnabled(t *testing.T) {
+	testcases := []struct {
+		name                string
+		provider            string
+		enabledAuthnClients []string
+		expected            bool
 	}{
 		{
-			desc:    "invalid credentials",
-			authErr: login.ErrInvalidCredentials,
-			info: loginservice.LoginInfo{
-				AuthModule: "",
-				HTTPStatus: 401,
-				Error:      login.ErrInvalidCredentials,
-			},
+			name:                "Github should return true if enabled",
+			provider:            loginservice.GithubAuthModule,
+			enabledAuthnClients: []string{authn.ClientWithPrefix(strings.TrimPrefix(loginservice.GithubAuthModule, "oauth_"))},
+			expected:            true,
 		},
 		{
-			desc:    "user disabled",
-			authErr: login.ErrUserDisabled,
-			info: loginservice.LoginInfo{
-				AuthModule: "",
-				HTTPStatus: 401,
-				Error:      login.ErrUserDisabled,
-			},
+			name:                "Github should return false if not enabled",
+			provider:            loginservice.GithubAuthModule,
+			enabledAuthnClients: []string{},
+			expected:            false,
+		},
+		// saml
+		{
+			name:                "SAML should return true if enabled",
+			provider:            loginservice.SAMLAuthModule,
+			enabledAuthnClients: []string{authn.ClientSAML},
+			expected:            true,
 		},
 		{
-			desc:       "valid Grafana user",
-			authUser:   testUser,
-			authModule: "grafana",
-			info: loginservice.LoginInfo{
-				AuthModule: "grafana",
-				User:       testUser,
-				HTTPStatus: 200,
-			},
-		},
-		{
-			desc:       "valid LDAP user",
-			authUser:   testUser,
-			authModule: loginservice.LDAPAuthModule,
-			info: loginservice.LoginInfo{
-				AuthModule: loginservice.LDAPAuthModule,
-				User:       testUser,
-				HTTPStatus: 200,
-			},
+			name:                "SAML should return false if not enabled",
+			provider:            loginservice.SAMLAuthModule,
+			enabledAuthnClients: []string{},
+			expected:            false,
 		},
 	}
 
-	for _, c := range testCases {
-		t.Run(c.desc, func(t *testing.T) {
-			hs.authenticator = &fakeAuthenticator{c.authUser, c.authModule, c.authErr}
-			sc.m.Post(sc.url, sc.defaultHandler)
-			sc.fakeReqNoAssertions("POST", sc.url).exec()
-
-			info := testHook.info
-			assert.Equal(t, c.info.AuthModule, info.AuthModule)
-			assert.Equal(t, "admin", info.LoginUsername)
-			assert.Equal(t, c.info.HTTPStatus, info.HTTPStatus)
-			assert.Equal(t, c.info.Error, info.Error)
-
-			if c.info.User != nil {
-				require.NotEmpty(t, info.User)
-				assert.Equal(t, c.info.User.ID, info.User.ID)
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			hs := &HTTPServer{
+				authnService: &authntest.FakeService{
+					EnabledClients: tc.enabledAuthnClients,
+				},
 			}
+			assert.Equal(t, tc.expected, hs.isProviderEnabled(setting.NewCfg(), tc.provider))
 		})
 	}
 }
@@ -716,16 +882,4 @@ func (m *mockSocialService) GetOAuthHttpClient(name string) (*http.Client, error
 
 func (m *mockSocialService) GetConnector(string) (social.SocialConnector, error) {
 	return m.socialConnector, m.err
-}
-
-type fakeAuthenticator struct {
-	ExpectedUser       *user.User
-	ExpectedAuthModule string
-	ExpectedError      error
-}
-
-func (fa *fakeAuthenticator) AuthenticateUser(c context.Context, query *loginservice.LoginUserQuery) error {
-	query.User = fa.ExpectedUser
-	query.AuthModule = fa.ExpectedAuthModule
-	return fa.ExpectedError
 }

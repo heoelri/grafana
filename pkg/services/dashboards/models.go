@@ -4,14 +4,16 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/components/simplejson"
+	"github.com/grafana/grafana/pkg/infra/metrics"
 	"github.com/grafana/grafana/pkg/infra/slugify"
 	"github.com/grafana/grafana/pkg/models"
+	"github.com/grafana/grafana/pkg/services/dashboards/dashboardaccess"
 	"github.com/grafana/grafana/pkg/services/folder"
 	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/services/quota"
 	"github.com/grafana/grafana/pkg/services/search/model"
-	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
 )
 
@@ -34,10 +36,13 @@ type Dashboard struct {
 
 	Created time.Time
 	Updated time.Time
+	Deleted time.Time
 
 	UpdatedBy int64
 	CreatedBy int64
-	FolderID  int64 `xorm:"folder_id"`
+	// Deprecated: use FolderUID instead
+	FolderID  int64  `xorm:"folder_id"`
+	FolderUID string `xorm:"folder_uid"`
 	IsFolder  bool
 	HasACL    bool `xorm:"has_acl"`
 
@@ -133,7 +138,10 @@ func (cmd *SaveDashboardCommand) GetDashboardModel() *Dashboard {
 	dash.OrgID = cmd.OrgID
 	dash.PluginID = cmd.PluginID
 	dash.IsFolder = cmd.IsFolder
+	metrics.MFolderIDsServiceCount.WithLabelValues(metrics.Dashboard).Inc()
+	// nolint:staticcheck
 	dash.FolderID = cmd.FolderID
+	dash.FolderUID = cmd.FolderUID
 	dash.UpdateSlug()
 	return dash
 }
@@ -194,20 +202,16 @@ type SaveDashboardCommand struct {
 	OrgID        int64            `json:"-" xorm:"org_id"`
 	RestoredFrom int              `json:"-"`
 	PluginID     string           `json:"-" xorm:"plugin_id"`
-	FolderID     int64            `json:"folderId" xorm:"folder_id"`
-	FolderUID    string           `json:"folderUid" xorm:"folder_uid"`
-	IsFolder     bool             `json:"isFolder"`
+	// Deprecated: use FolderUID instead
+	FolderID  int64  `json:"folderId" xorm:"folder_id"`
+	FolderUID string `json:"folderUid" xorm:"folder_uid"`
+	IsFolder  bool   `json:"isFolder"`
 
 	UpdatedAt time.Time
 }
 
-type ValidateDashboardCommand struct {
-	Dashboard string `json:"dashboard" binding:"Required"`
-}
-
-type TrimDashboardCommand struct {
-	Dashboard *simplejson.Json `json:"dashboard" binding:"Required"`
-	Meta      *simplejson.Json `json:"meta"`
+type RestoreDeletedDashboardCommand struct {
+	FolderUID string `json:"folderUid" xorm:"folder_uid"`
 }
 
 type DashboardProvisioning struct {
@@ -221,6 +225,7 @@ type DashboardProvisioning struct {
 
 type DeleteDashboardCommand struct {
 	ID                     int64
+	UID                    string
 	OrgID                  int64
 	ForceDeleteFolderRules bool
 }
@@ -247,11 +252,16 @@ type DeleteOrphanedProvisionedDashboardsCommand struct {
 //
 // Multiple constraints can be combined.
 type GetDashboardQuery struct {
-	ID       int64
-	UID      string
-	Title    *string
-	FolderID *int64
-	OrgID    int64
+	ID  int64
+	UID string
+	// Deprecated: this is no-longer a unique constraint and should not be used
+	Title *string
+	// Deprecated: use FolderUID instead
+	FolderID  *int64
+	FolderUID *string
+	OrgID     int64
+
+	IncludeDeleted bool // only supported when using unified storage
 }
 
 type DashboardTagCloudItem struct {
@@ -286,24 +296,28 @@ type GetDashboardRefByIDQuery struct {
 type SaveDashboardDTO struct {
 	OrgID     int64
 	UpdatedAt time.Time
-	User      *user.SignedInUser
+	User      identity.Requester
 	Message   string
 	Overwrite bool
 	Dashboard *Dashboard
 }
 
 type DashboardSearchProjection struct {
-	ID          int64  `xorm:"id"`
-	UID         string `xorm:"uid"`
-	Title       string
-	Slug        string
-	Term        string
-	IsFolder    bool
+	ID       int64  `xorm:"id"`
+	UID      string `xorm:"uid"`
+	OrgID    int64  `xorm:"org_id"`
+	Title    string
+	Slug     string
+	Term     string
+	IsFolder bool
+	// Deprecated: use FolderUID instead
 	FolderID    int64  `xorm:"folder_id"`
 	FolderUID   string `xorm:"folder_uid"`
 	FolderSlug  string
 	FolderTitle string
 	SortMeta    int64
+	Tags        []string
+	Deleted     *time.Time
 }
 
 const (
@@ -320,13 +334,14 @@ type CountDashboardsInFolderQuery struct {
 // to the store layer. The FolderID will be replaced with FolderUID when
 // dashboards are updated with parent folder UIDs.
 type CountDashboardsInFolderRequest struct {
-	FolderID int64
-	OrgID    int64
+	FolderUIDs []string
+	OrgID      int64
 }
 
 func FromDashboard(dash *Dashboard) *folder.Folder {
+	metrics.MFolderIDsServiceCount.WithLabelValues(metrics.Dashboard).Inc()
 	return &folder.Folder{
-		ID:        dash.ID,
+		ID:        dash.ID, // nolint:staticcheck
 		UID:       dash.UID,
 		OrgID:     dash.OrgID,
 		Title:     dash.Title,
@@ -338,6 +353,16 @@ func FromDashboard(dash *Dashboard) *folder.Folder {
 		Updated:   dash.Updated,
 		UpdatedBy: dash.UpdatedBy,
 	}
+}
+
+type DeleteDashboardsInFolderRequest struct {
+	FolderUIDs []string
+	OrgID      int64
+}
+
+type GetAllDashboardsInFolderRequest struct {
+	FolderUIDs []string
+	OrgID      int64
 }
 
 //
@@ -353,7 +378,7 @@ type DashboardACL struct {
 	UserID     int64         `xorm:"user_id"`
 	TeamID     int64         `xorm:"team_id"`
 	Role       *org.RoleType // pointer to be nullable
-	Permission PermissionType
+	Permission dashboardaccess.PermissionType
 
 	Created time.Time
 	Updated time.Time
@@ -364,72 +389,58 @@ func (p DashboardACL) TableName() string { return "dashboard_acl" }
 type DashboardACLInfoDTO struct {
 	OrgID       int64 `json:"-" xorm:"org_id"`
 	DashboardID int64 `json:"dashboardId,omitempty" xorm:"dashboard_id"`
-	FolderID    int64 `json:"folderId,omitempty" xorm:"folder_id"`
+	// Deprecated: use FolderUID instead
+	FolderID  int64  `json:"folderId,omitempty" xorm:"folder_id"`
+	FolderUID string `json:"folderUid,omitempty" xorm:"folder_uid"`
 
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
 
-	UserID         int64          `json:"userId" xorm:"user_id"`
-	UserLogin      string         `json:"userLogin"`
-	UserEmail      string         `json:"userEmail"`
-	UserAvatarURL  string         `json:"userAvatarUrl" xorm:"user_avatar_url"`
-	TeamID         int64          `json:"teamId" xorm:"team_id"`
-	TeamEmail      string         `json:"teamEmail"`
-	TeamAvatarURL  string         `json:"teamAvatarUrl" xorm:"team_avatar_url"`
-	Team           string         `json:"team"`
-	Role           *org.RoleType  `json:"role,omitempty"`
-	Permission     PermissionType `json:"permission"`
-	PermissionName string         `json:"permissionName"`
-	UID            string         `json:"uid" xorm:"uid"`
-	Title          string         `json:"title"`
-	Slug           string         `json:"slug"`
-	IsFolder       bool           `json:"isFolder"`
-	URL            string         `json:"url" xorm:"url"`
-	Inherited      bool           `json:"inherited"`
-}
-
-func (dto *DashboardACLInfoDTO) hasSameRoleAs(other *DashboardACLInfoDTO) bool {
-	if dto.Role == nil || other.Role == nil {
-		return false
-	}
-
-	return dto.UserID <= 0 && dto.TeamID <= 0 && dto.UserID == other.UserID && dto.TeamID == other.TeamID && *dto.Role == *other.Role
-}
-
-func (dto *DashboardACLInfoDTO) hasSameUserAs(other *DashboardACLInfoDTO) bool {
-	return dto.UserID > 0 && dto.UserID == other.UserID
-}
-
-func (dto *DashboardACLInfoDTO) hasSameTeamAs(other *DashboardACLInfoDTO) bool {
-	return dto.TeamID > 0 && dto.TeamID == other.TeamID
-}
-
-// IsDuplicateOf returns true if other item has same role, same user or same team
-func (dto *DashboardACLInfoDTO) IsDuplicateOf(other *DashboardACLInfoDTO) bool {
-	return dto.hasSameRoleAs(other) || dto.hasSameUserAs(other) || dto.hasSameTeamAs(other)
-}
-
-// QUERIES
-type GetDashboardACLInfoListQuery struct {
-	DashboardID int64
-	OrgID       int64
+	UserID         int64                          `json:"userId" xorm:"user_id"`
+	UserUID        string                         `json:"userUid"`
+	UserLogin      string                         `json:"userLogin"`
+	UserEmail      string                         `json:"userEmail"`
+	UserAvatarURL  string                         `json:"userAvatarUrl" xorm:"user_avatar_url"`
+	TeamID         int64                          `json:"teamId" xorm:"team_id"`
+	TeamUID        string                         `json:"teamUid"`
+	TeamEmail      string                         `json:"teamEmail"`
+	TeamAvatarURL  string                         `json:"teamAvatarUrl" xorm:"team_avatar_url"`
+	Team           string                         `json:"team"`
+	Role           *org.RoleType                  `json:"role,omitempty"`
+	Permission     dashboardaccess.PermissionType `json:"permission"`
+	PermissionName string                         `json:"permissionName"`
+	UID            string                         `json:"uid" xorm:"uid"`
+	Title          string                         `json:"title"`
+	Slug           string                         `json:"slug"`
+	IsFolder       bool                           `json:"isFolder"`
+	URL            string                         `json:"url" xorm:"url"`
+	Inherited      bool                           `json:"inherited"`
 }
 
 type FindPersistedDashboardsQuery struct {
 	Title         string
 	OrgId         int64
-	SignedInUser  *user.SignedInUser
+	SignedInUser  identity.Requester
 	DashboardIds  []int64
 	DashboardUIDs []string
 	Type          string
-	FolderIds     []int64
-	Tags          []string
-	Limit         int64
-	Page          int64
-	Permission    PermissionType
-	Sort          model.SortOption
+	// Deprecated: use FolderUIDs instead
+	FolderIds  []int64
+	FolderUIDs []string
+	Tags       []string
+	Limit      int64
+	Page       int64
+	Permission dashboardaccess.PermissionType
+	Sort       model.SortOption
+	IsDeleted  bool
 
-	Filters []interface{}
+	ProvisionedRepo       string
+	ProvisionedPath       string
+	ProvisionedReposNotIn []string
 
-	Result model.HitList
+	Filters []any
+
+	// Skip access control checks. This field is used by OpenFGA search implementation.
+	// Should not be used anywhere else.
+	SkipAccessControlFilter bool
 }

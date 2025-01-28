@@ -7,8 +7,9 @@ import {
   MetricFindValue,
   toDataFrame,
 } from '@grafana/data';
-import { getTemplateSrv } from '@grafana/runtime';
+import { getTemplateSrv, TemplateSrv } from '@grafana/runtime';
 
+import UrlBuilder from './azure_monitor/url_builder';
 import VariableEditor from './components/VariableEditor/VariableEditor';
 import DataSource from './datasource';
 import { migrateQuery } from './grafanaTemplateVariableFns';
@@ -17,13 +18,12 @@ import { GrafanaTemplateVariableQuery } from './types/templateVariables';
 import messageFromError from './utils/messageFromError';
 
 export class VariableSupport extends CustomVariableSupport<DataSource, AzureMonitorQuery> {
-  templateSrv = getTemplateSrv();
-
-  constructor(private readonly datasource: DataSource) {
+  constructor(
+    private readonly datasource: DataSource,
+    private readonly templateSrv: TemplateSrv = getTemplateSrv()
+  ) {
     super();
     this.datasource = datasource;
-    this.query = this.query.bind(this);
-    this.templateSrv = getTemplateSrv();
   }
 
   editor = VariableEditor;
@@ -120,6 +120,58 @@ export class VariableSupport extends CustomVariableSupport<DataSource, AzureMoni
                 data: res?.length ? [toDataFrame(res)] : [],
               };
             }
+          case AzureQueryType.CustomNamespacesQuery:
+            if (
+              queryObj.subscription &&
+              queryObj.resourceGroup &&
+              queryObj.namespace &&
+              queryObj.resource &&
+              this.hasValue(queryObj.subscription, queryObj.resourceGroup, queryObj.namespace, queryObj.resource)
+            ) {
+              const resourceUri = UrlBuilder.buildResourceUri(this.templateSrv, {
+                subscription: queryObj.subscription,
+                resourceGroup: queryObj.resourceGroup,
+                metricNamespace: queryObj.namespace,
+                resourceName: queryObj.resource,
+              });
+              const res = await this.datasource.getMetricNamespaces(
+                queryObj.subscription,
+                queryObj.resourceGroup,
+                resourceUri,
+                true
+              );
+              return {
+                data: res?.length ? [toDataFrame(res)] : [],
+              };
+            }
+            return { data: [] };
+          case AzureQueryType.CustomMetricNamesQuery:
+            if (
+              queryObj.subscription &&
+              queryObj.resourceGroup &&
+              queryObj.namespace &&
+              queryObj.resource &&
+              queryObj.customNamespace &&
+              this.hasValue(
+                queryObj.subscription,
+                queryObj.resourceGroup,
+                queryObj.namespace,
+                queryObj.resource,
+                queryObj.customNamespace
+              )
+            ) {
+              const rgs = await this.datasource.getMetricNames(
+                queryObj.subscription,
+                queryObj.resourceGroup,
+                queryObj.namespace,
+                queryObj.resource,
+                queryObj.customNamespace
+              );
+              return {
+                data: rgs?.length ? [toDataFrame(rgs)] : [],
+              };
+            }
+            return { data: [] };
           default:
             request.targets[0] = queryObj;
             const queryResp = await lastValueFrom(this.datasource.query(request));
@@ -170,6 +222,6 @@ export class VariableSupport extends CustomVariableSupport<DataSource, AzureMoni
   }
 
   replaceVariable(metric: string) {
-    return getTemplateSrv().replace((metric || '').trim());
+    return this.templateSrv.replace((metric || '').trim());
   }
 }
